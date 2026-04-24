@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+venv/
+.venv/
+
+# Streamlit (solo ignorar secretos, no el config de tema)
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
