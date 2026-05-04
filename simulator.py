@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from itertools import accumulate
 
 def simular_continua(df_diario, codigo_estacion, anio_inicio, anio_fin,
                      meses_num_seleccionados, consumo_fines_semana,
@@ -21,17 +22,19 @@ def simular_continua(df_diario, codigo_estacion, anio_inicio, anio_fin,
     # AQUI SE APLICA EL GRADIENTE OROGRAFICO A LA LLUVIA:
     df['Captado (L)'] = (df[codigo_estacion].fillna(0) * multiplicador_lluvia) * techo * eficiencia
 
-    cap_arr      = df['Captado (L)'].values
-    dem_arr      = df['Demanda (L)'].values
-    n            = len(df)
-    estanque_arr = np.empty(n)
+    cap_arr = df['Captado (L)'].values
+    dem_arr = df['Demanda (L)'].values
 
-    nivel = 0.0
-    for i in range(n):
-        disp       = min(nivel + cap_arr[i], capacidad_maxima)
-        usada      = min(disp, dem_arr[i])
-        nivel      = max(0.0, disp - usada)
-        estanque_arr[i] = nivel
+    def _paso(nivel, cd):
+        captado, demanda = cd
+        disp  = min(nivel + captado, capacidad_maxima)
+        usada = min(disp, demanda)
+        return max(0.0, disp - usada)
+
+    estanque_arr = np.fromiter(
+        accumulate(zip(cap_arr, dem_arr), _paso, initial=0.0),
+        dtype=float, count=len(cap_arr) + 1
+    )[1:]
 
     df['Estanque Final (L)'] = estanque_arr
     # Guardamos la lluvia corregida para usarla después
@@ -138,30 +141,33 @@ def calcular_curva_optimizacion(df_slice, capacidad_maxima):
 
     cap_arr = df_slice['Captado (L)'].values
     dem_arr = df_slice['Demanda (L)'].values
+    dem_tot = dem_arr.sum()
 
-    eficiencias = []
-    for cap_prueba in capacidades_prueba:
-        nivel, dem_tot, sum_tot = 0.0, 0.0, 0.0
-        for i in range(len(cap_arr)):
-            disp   = min(nivel + cap_arr[i], cap_prueba)
-            usada  = min(disp, dem_arr[i])
-            nivel  = max(0.0, disp - dem_arr[i])
-            dem_tot += dem_arr[i]
-            sum_tot += usada
-        eficiencias.append((sum_tot / dem_tot * 100) if dem_tot > 0 else 100.0)
+    # Vectorizado: simula todas las capacidades en paralelo con NumPy
+    caps    = np.array(capacidades_prueba, dtype=np.float64)
+    nivel   = np.zeros(len(caps))
+    sum_tot = np.zeros(len(caps))
+    for captado_i, demanda_i in zip(cap_arr, dem_arr):
+        disp     = np.minimum(nivel + captado_i, caps)
+        usada    = np.minimum(disp, demanda_i)
+        nivel    = np.maximum(0.0, disp - demanda_i)
+        sum_tot += usada
+    eficiencias = (sum_tot / dem_tot * 100).tolist() if dem_tot > 0 else [100.0] * len(caps)
 
     max_ef     = max(eficiencias)
     cap_optima = capacidades_prueba[-1]
     if max_ef >= 95:
+        # Primer estanque que alcanza el 95% de cobertura
         for cp, ef in zip(capacidades_prueba, eficiencias):
             if ef >= 95:
                 cap_optima = cp
                 break
     else:
-        umbral = max_ef * 0.98
-        for cp, ef in zip(capacidades_prueba, eficiencias):
-            if ef >= umbral:
-                cap_optima = cp
+        # Método del codo: primer punto donde la ganancia marginal cae bajo 1%/1000 L
+        # Esto evita recomendar estanques diminutos en años de sequía
+        for i in range(1, len(eficiencias)):
+            if (eficiencias[i] - eficiencias[i - 1]) < 1.0:
+                cap_optima = capacidades_prueba[i]
                 break
 
     idx_cercano = (np.abs(np.array(capacidades_prueba) - capacidad_maxima)).argmin()
@@ -169,3 +175,74 @@ def calcular_curva_optimizacion(df_slice, capacidad_maxima):
     ef_optima   = eficiencias[capacidades_prueba.index(cap_optima)]
 
     return capacidades_prueba, eficiencias, cap_optima, ef_actual, ef_optima
+
+
+def _simular_desde_serie_desactivado(df_pp, meses_num_seleccionados, consumo_fines_semana,  # DESACTIVADO
+                        numero_personas, litros_persona_dia,
+                        capacidad_maxima, techo, eficiencia):
+    """
+    Simula el balance del estanque a partir de una serie externa de precipitaciones
+    (ej: ERA5 + pronóstico CFS v2 para 2026).
+
+    df_pp debe tener columnas: Fecha (str YYYY-MM-DD), PP (float mm/día), tipo (str)
+    """
+    df = df_pp.copy()
+    df['Fecha_dt']   = pd.to_datetime(df['Fecha'], errors='coerce')
+    df               = df.dropna(subset=['Fecha_dt']).sort_values('Fecha_dt').reset_index(drop=True)
+    df['Mes_Num']    = df['Fecha_dt'].dt.strftime('%m')
+    df['Dia_Semana'] = df['Fecha_dt'].dt.dayofweek
+
+    consumo_base = numero_personas * litros_persona_dia
+    mask_mes     = df['Mes_Num'].isin(meses_num_seleccionados).values
+    mask_dia     = np.ones(len(df), dtype=bool) if consumo_fines_semana \
+                   else (df['Dia_Semana'].values < 5)
+    demanda      = np.where(mask_mes & mask_dia, consumo_base, 0.0)
+
+    pp_vals = pd.to_numeric(df['PP'], errors='coerce').fillna(0).clip(lower=0).values
+    captado = pp_vals * techo * eficiencia
+
+    n                 = len(df)
+    estanque_final    = np.empty(n)
+    rebalse_arr       = np.empty(n)
+    acumulado_teorico = np.empty(n)
+    deficit_arr       = np.empty(n)
+
+    nivel = 0.0
+    for i in range(n):
+        teorico    = nivel + captado[i]
+        disponible = min(teorico, capacidad_maxima)
+        reb        = max(0.0, teorico - capacidad_maxima)
+        usada      = min(disponible, demanda[i])
+        nivel      = max(0.0, disponible - demanda[i])
+
+        estanque_final[i]    = nivel
+        rebalse_arr[i]       = reb
+        acumulado_teorico[i] = teorico - demanda[i]
+        deficit_arr[i]       = 0.0 if usada >= demanda[i] else usada - demanda[i]
+
+    mes_dia   = df['Fecha_dt'].dt.strftime('%m-%d').values
+    es_finde  = df['Dia_Semana'].values >= 5
+    etiquetas = np.where(
+        ~mask_mes,  " (Vacaciones)",
+        np.where(~consumo_fines_semana & es_finde, " (Finde)", "")
+    )
+    fecha_strs = df['Fecha_dt'].dt.strftime('%Y-%m-%d').values
+
+    df_result = pd.DataFrame({
+        "Fecha Pura":                 fecha_strs,
+        "Mes_Dia":                    mes_dia,
+        "Día":                        [f"{f}{e}" for f, e in zip(fecha_strs, etiquetas)],
+        "Lluvia (mm)":                pp_vals,
+        "Captado (L)":                captado,
+        "Demanda (L)":                demanda,
+        "Estanque Final (L)":         estanque_final,
+        "Rebalse (L)":                rebalse_arr,
+        "Agua Acumulada Teórica (L)": acumulado_teorico,
+        "Déficit Diario (L)":         deficit_arr,
+        "tipo":                       df['tipo'].values,
+    })
+    # Eje X normalizado a 2024 para que los gráficos sean idénticos a los escenarios históricos
+    df_result['Eje X']      = pd.to_datetime('2024-' + df_result['Mes_Dia'], errors='coerce')
+    # Eje X Real con fechas 2026 para el gráfico real/pronóstico
+    df_result['Eje X Real'] = pd.to_datetime(df_result['Fecha Pura'], errors='coerce')
+    return df_result

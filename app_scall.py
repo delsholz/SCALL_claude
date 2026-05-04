@@ -96,26 +96,41 @@ def generar_informe_pdf(d):
         pdf.cell(w_val, 6, str(valor), fill=True)
         return y + 6
 
-    # ── SECCIÓN: PARÁMETROS ───────────────────────────────────
+    # ── SECCIÓN: PARÁMETROS (2 columnas) ─────────────────────
     y = sec_title("PARAMETROS DEL SISTEMA", y)
     y_params = y
 
-    params = [
+    params_izq = [
         ("Superficie del Techo",    f"{d['techo']} m2"),
         ("Capacidad del Estanque",  f"{d['capacidad_maxima']:,.0f} Litros"),
         ("Eficiencia de Captacion", f"{d['eficiencia']*100:.0f}%"),
         ("Numero de Personas",      f"{d['numero_personas']}"),
         ("Consumo por Persona",     f"{d['litros_persona_dia']} L/persona/dia"),
+    ]
+    params_der = [
         ("Consumo Mensual Total",   f"{d['consumo_mensual']:,.0f} L/mes"),
         ("Tipo de Uso",             d["tipo_uso"].split("(")[0].strip()),
         ("Meses de Operacion",      ", ".join(d["meses_seleccionados"])),
         ("Coordenadas",             f"{d['lat_proyecto']:.4f} / {d['lon_proyecto']:.4f}"),
         ("Altitud del Proyecto",    f"{d['alt_proyecto']} m.s.n.m."),
     ]
-    for i, (lbl, val) in enumerate(params):
-        kv(lbl, val, y_params + i * 6, x=10, w_label=55, w_val=80, alt=(i % 2 == 0))
+    for i, ((l1, v1), (l2, v2)) in enumerate(zip(params_izq, params_der)):
+        bg = GRIS if i % 2 == 0 else BLANCO
+        pdf.set_fill_color(*bg)
+        pdf.set_text_color(*NEGRO)
+        # columna izquierda
+        pdf.set_xy(10, y_params + i * 6)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(38, 6, l1, fill=True)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.cell(52, 6, v1, fill=True)
+        # columna derecha
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(38, 6, l2, fill=True)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.cell(52, 6, v2, fill=True)
 
-    y_after_params = y_params + len(params) * 6 + 4
+    y_after_params = y_params + len(params_izq) * 6 + 3
 
     # ── SECCIÓN: ESTACIÓN ─────────────────────────────────────
     y_est = sec_title("ESTACION METEOROLOGICA", y_after_params)
@@ -131,7 +146,7 @@ def generar_informe_pdf(d):
     for i, (lbl, val) in enumerate(station):
         kv(lbl, val, y_est + i * 6, x=10, w_label=55, w_val=135, alt=(i % 2 == 0))
 
-    y = y_est + len(station) * 6 + 5
+    y = y_est + len(station) * 6 + 3
 
     # ── SECCIÓN: TABLA RESULTADOS ─────────────────────────────
     y = sec_title("RESULTADOS POR ESCENARIO CLIMATICO", y)
@@ -156,12 +171,12 @@ def generar_informe_pdf(d):
     for nombre_esc, anio_esc, df_esc, color in escenarios:
         td   = df_esc["Demanda (L)"].sum()
         # Manejo de tildes/nombres de columnas
-        col_def = "Deficit Diario (L)" if "Deficit Diario (L)" in df_esc else "Déficit Diario (L)"
+        col_def = "Déficit Diario (L)" if "Déficit Diario (L)" in df_esc.columns else "Deficit Diario (L)"
         def_ = df_esc[col_def].sum()
-        
+
         ts   = td + def_
         pct  = (ts / td * 100) if td > 0 else 100
-        dsag = int((df_esc.filter(like="ficit").iloc[:, 0] < 0).sum())
+        dsag = int((df_esc[col_def] < 0).sum())
         tc   = df_esc["Captado (L)"].sum()
         lluv = d["totales_anio"].get(anio_esc, 0)
 
@@ -176,7 +191,7 @@ def generar_informe_pdf(d):
             pdf.cell(w, 8, v, border=1, align=al, fill=True)
         y += 8
 
-    y += 6
+    y += 3
 
     # ── SECCIÓN: TAMAÑO OPTIMO ────────────────────────────────
     y = sec_title("TAMANO OPTIMO DEL ESTANQUE (Ano Normal)", y)
@@ -211,17 +226,17 @@ def generar_informe_pdf(d):
         pdf.cell(40, 6, v2, fill=True)
         y += 6
 
-    y += 5
+    y += 3
 
     # ── SECCIÓN: CONCLUSIÓN ───────────────────────────────────
     y = sec_title("CONCLUSION", y)
 
     td_n  = d["df_normal"]["Demanda (L)"].sum()
-    col_def_n = "Deficit Diario (L)" if "Deficit Diario (L)" in d["df_normal"] else "Déficit Diario (L)"
+    col_def_n = "Déficit Diario (L)" if "Déficit Diario (L)" in d["df_normal"].columns else "Deficit Diario (L)"
     def_n = d["df_normal"][col_def_n].sum()
     pct_n = ((td_n + def_n) / td_n * 100) if td_n > 0 else 100
-    
-    col_def_s = "Deficit Diario (L)" if "Deficit Diario (L)" in d["df_seco"] else "Déficit Diario (L)"
+
+    col_def_s = "Déficit Diario (L)" if "Déficit Diario (L)" in d["df_seco"].columns else "Deficit Diario (L)"
     dsag_s = int((d["df_seco"][col_def_s] < 0).sum())
 
     lineas = [
@@ -316,7 +331,7 @@ st.sidebar.header("2. Calidad de Datos")
 umbral_calidad = st.sidebar.slider(
     "Mínimo de registros válidos (%)",
     min_value=0, max_value=100, value=80, step=5,
-    help="Solo se usarán estaciones con este % de datos válidos (1990 a 2020)."
+    help="Solo se usarán estaciones con este % de datos válidos (2000 a 2020)."
 )
 
 st.sidebar.header("3. Coordenadas de Ubicación")
@@ -364,8 +379,284 @@ coef_orografico = st.sidebar.slider(
 )
 
 st.title("💧 Simulador de Cosecha de Aguas Lluvias SCALL")
-st.write("Calcula la viabilidad de tu estanque analizando la **realidad climática continua** desde 1990 a 2020 "
+st.write("Calcula la viabilidad de tu estanque analizando la **realidad climática continua** desde 2000 a 2020 "
          "(utilizando datos oficiales del **(CR)²**) y extrayendo los años reales extremos.")
+
+# ===============================================================
+# FUNCIONES DE VISUALIZACIÓN (compartidas entre tabs)
+# ===============================================================
+def colorear_filas_diarias(row):
+    estilos = [""] * len(row)
+    if "Déficit Diario (L)" not in row.index:
+        return estilos
+    idx_sd = list(row.index).index("Déficit Diario (L)")
+    if row["Déficit Diario (L)"] == 0:
+        estilos[idx_sd] = "background-color: #d4edda; color: #155724; font-weight: bold"
+    else:
+        estilos[idx_sd] = "background-color: #f8d7da; color: #721c24; font-weight: bold"
+    return estilos
+
+
+def mostrar_detalles_escenario(df_slice, nombre, key_suffix=""):
+    total_captado      = df_slice['Captado (L)'].sum()
+    total_demanda      = df_slice['Demanda (L)'].sum()
+    deficit_total      = df_slice['Déficit Diario (L)'].sum()
+    total_suministrado = total_demanda + deficit_total
+    pct_cubierto       = (total_suministrado / total_demanda * 100) if total_demanda > 0 else 100
+    dias_sin_agua      = (df_slice['Déficit Diario (L)'] < 0).sum()
+
+    st.write("#### Indicadores Clave de Desempeño (KPIs)")
+    st.caption("**Fórmula de Balance:** *Total Potencial a Captar = "
+               "Agua Consumida + Agua Almacenada + Agua Perdida por Rebalse*")
+
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    kpi1.metric("💧 Total Potencial a Captar", f"{formato_chileno(total_captado, 0)} L")
+    kpi2.metric("🎯 Demanda Cubierta",         f"{formato_chileno(pct_cubierto, 1)} %")
+    kpi3.metric("🚨 Días sin agua",            f"{dias_sin_agua} días")
+    kpi4.metric("🌊 Rebalse",                  f"{formato_chileno(df_slice['Rebalse (L)'].sum(), 0)} L")
+    st.markdown("---")
+
+    st.write(f"#### Nivel del Estanque: {nombre}")
+    eje_col = 'Eje X'
+    y_vals  = df_slice["Agua Acumulada Teórica (L)"]
+    y_min, y_max = y_vals.min(), y_vals.max()
+    margen_inf   = max(abs(y_min) * 0.4, capacidad_maxima * 0.20)
+    margen_sup   = max((y_max - capacidad_maxima) * 0.25, capacidad_maxima * 0.15)
+
+    fig_nivel = go.Figure()
+    fig_nivel.add_trace(go.Scatter(
+        x=df_slice[eje_col], y=y_vals, mode='lines', fill='tozeroy',
+        name="Acumulado Teórico", line=dict(color='#3498db', width=2),
+        fillcolor='rgba(52, 152, 219, 0.25)',
+        hovertemplate="<b>%{x|%d %b}</b><br>Nivel: %{y:,.0f} L<extra></extra>"
+    ))
+    fig_nivel.add_hline(
+        y=capacidad_maxima, line_dash="dash", line_color="red", line_width=2,
+        annotation_text=f"Capacidad máxima: {formato_chileno(capacidad_maxima, 0)} L",
+        annotation_position="top left", annotation_font=dict(color="red", size=12)
+    )
+    fig_nivel.add_hline(
+        y=0, line_dash="dot", line_color="orange", line_width=1.5,
+        annotation_text="Sin agua", annotation_position="bottom right",
+        annotation_font=dict(color="orange", size=11)
+    )
+    fig_nivel.update_layout(
+        yaxis=dict(title="Volumen (Litros)",
+                   range=[y_min - margen_inf, y_max + margen_sup], tickformat=","),
+        xaxis=dict(title="Meses del Año", dtick="M1", tickformat="%b",
+                   showgrid=True, gridcolor="rgba(200,200,200,0.4)"),
+        height=400, margin=dict(t=20, b=50, l=60, r=20),
+        plot_bgcolor="rgba(0,0,0,0)", showlegend=False
+    )
+    st.plotly_chart(fig_nivel, use_container_width=True,
+                    config={'scrollZoom': False, 'displayModeBar': True},
+                    key=f"fig_nivel{key_suffix}")
+    st.markdown("---")
+
+    st.write("####  Curva de Optimización del Estanque")
+    capacidades_prueba, eficiencias, cap_optima, ef_actual, ef_optima = \
+        calcular_curva_optimizacion(df_slice, capacidad_maxima)
+
+    col_opt1, col_opt2 = st.columns(2)
+    col_opt1.metric(
+        " Tamaño Óptimo del Estanque",
+        f"{formato_chileno(cap_optima, 0)} L",
+        help="Punto donde la curva empieza a estabilizarse (ganancia marginal < 1%/1000L) o alcanza 95%."
+    )
+    col_opt2.metric(
+        " Cobertura con Tu Estanque",
+        f"{formato_chileno(ef_actual, 1)} %",
+        delta=f"{formato_chileno(ef_actual - ef_optima, 1)} % vs óptimo",
+        delta_color="normal" if ef_actual >= ef_optima else "inverse"
+    )
+
+    fig_opt = go.Figure()
+
+    # Curva principal con relleno
+    fig_opt.add_trace(go.Scatter(
+        x=capacidades_prueba, y=eficiencias,
+        mode='lines', name='Cobertura (%)',
+        line=dict(color='#3498db', width=2.5),
+        fill='tozeroy', fillcolor='rgba(52,152,219,0.10)',
+        hovertemplate="<b>%{x:,.0f} L</b><br>Cobertura: %{y:.1f}%<extra></extra>"
+    ))
+
+    # Punto marcado: Tu Estanque actual
+    idx_actual = int(np.argmin(np.abs(np.array(capacidades_prueba) - capacidad_maxima)))
+    fig_opt.add_trace(go.Scatter(
+        x=[capacidades_prueba[idx_actual]], y=[ef_actual],
+        mode='markers',
+        marker=dict(color='#e74c3c', size=13, symbol='circle',
+                    line=dict(color='white', width=2)),
+        name=f'Tu Estanque ({formato_chileno(capacidad_maxima, 0)} L)',
+        hovertemplate=f"Tu Estanque: {capacidad_maxima:,.0f} L<br>Cobertura: {ef_actual:.1f}%<extra></extra>"
+    ))
+
+    # Punto marcado: Óptimo (solo si difiere del actual)
+    if abs(cap_optima - capacidad_maxima) > 1000:
+        idx_opt = capacidades_prueba.index(cap_optima)
+        fig_opt.add_trace(go.Scatter(
+            x=[cap_optima], y=[ef_optima],
+            mode='markers',
+            marker=dict(color='#2ecc71', size=13, symbol='diamond',
+                        line=dict(color='white', width=2)),
+            name=f'Óptimo ({formato_chileno(cap_optima, 0)} L)',
+            hovertemplate=f"Óptimo: {cap_optima:,.0f} L<br>Cobertura: {ef_optima:.1f}%<extra></extra>"
+        ))
+
+    # Líneas verticales con posición inteligente según cuál es mayor
+    if abs(cap_optima - capacidad_maxima) > 1000:
+        opt_es_mayor = cap_optima > capacidad_maxima
+        fig_opt.add_vline(
+            x=capacidad_maxima, line_dash="solid", line_color="#e74c3c", line_width=1.5,
+            annotation_text=f"Tu Estanque<br>{capacidad_maxima:,.0f} L | {ef_actual:.1f}%",
+            annotation_position="top right" if opt_es_mayor else "top left",
+            annotation_font=dict(color="#e74c3c", size=10)
+        )
+        fig_opt.add_vline(
+            x=cap_optima, line_dash="dash", line_color="#2ecc71", line_width=1.5,
+            annotation_text=f"Óptimo<br>{cap_optima:,.0f} L | {ef_optima:.1f}%",
+            annotation_position="top left" if opt_es_mayor else "top right",
+            annotation_font=dict(color="#2ecc71", size=10)
+        )
+    else:
+        fig_opt.add_vline(
+            x=capacidad_maxima, line_dash="dash", line_color="#2ecc71", line_width=1.5,
+            annotation_text=f"Tu Estanque ≈ Óptimo<br>{capacidad_maxima:,.0f} L | {ef_actual:.1f}%",
+            annotation_position="top left",
+            annotation_font=dict(color="#2ecc71", size=10)
+        )
+
+    max_ef_vis = max(eficiencias) if eficiencias else 100
+    fig_opt.update_layout(
+        yaxis=dict(title="% Demanda Anual Cubierta",
+                   range=[0, min(max_ef_vis * 1.18, 105)],
+                   ticksuffix="%"),
+        xaxis=dict(title="Capacidad del Estanque (L)", tickformat=","),
+        height=400, margin=dict(t=30, b=60, l=65, r=20),
+        legend=dict(orientation="h", y=-0.25),
+        plot_bgcolor="rgba(0,0,0,0)"
+    )
+    st.plotly_chart(fig_opt, use_container_width=True,
+                    config={'scrollZoom': False, 'displayModeBar': True},
+                    key=f"fig_opt{key_suffix}")
+
+    # Balance humano
+    st.markdown("---")
+    st.write("#### Resumen de Abastecimiento Humano")
+    aporte_real_persona = (total_suministrado / total_demanda) * litros_persona_dia \
+        if total_demanda > 0 else 0
+
+    col_tank, col_persona = st.columns(2)
+    with col_tank:
+        st.metric(
+            label="Volumen Total Cubierto",
+            value=f"{formato_chileno(total_suministrado, 0)} L",
+            delta=f"de {formato_chileno(total_demanda, 0)} L demandados en el año",
+            delta_color="off"
+        )
+        porcentaje_limite = min(pct_cubierto, 100.0)
+        st.markdown(f"""
+        <div style="margin-top: 15px;">
+            <div style="font-weight: bold; font-size: 14.5px; margin-bottom: 6px;
+                        color: #d4f7ff; letter-spacing: 0.5px;">
+                El estanque cubrió el {formato_chileno(pct_cubierto, 1)}% de la necesidad
+            </div>
+            <div style="background-color: rgba(255,255,255,0.08); border-radius: 8px;
+                        height: 22px; width: 100%; position: relative; overflow: hidden;
+                        border: 1px solid rgba(255,255,255,0.15);
+                        box-shadow: inset 0px 4px 6px rgba(0,0,0,0.4);">
+                <div style="background-color: #3498db; width: {porcentaje_limite}%;
+                            height: 100%; position: absolute; left: 0; top: 0;
+                            transition: width 1s ease-in-out;
+                            box-shadow: 2px 0px 4px rgba(0,0,0,0.3);"></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col_persona:
+        st.metric(
+            label=" Agua Asegurada por Persona",
+            value=f"{formato_chileno(aporte_real_persona, 1)} L/día",
+            delta=f"Meta original: {litros_persona_dia} L/día",
+            delta_color="off"
+        )
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Seguridad hídrica
+    st.markdown("---")
+    st.write("#### Análisis de Seguridad y Disponibilidad")
+
+    total_dias    = len(df_slice)
+    dias_criticos = (df_slice['Estanque Final (L)'] < (capacidad_maxima * 0.10)).sum()
+    dias_optimos  = (df_slice['Estanque Final (L)'] > (capacidad_maxima * 0.80)).sum()
+    dias_medios   = total_dias - dias_criticos - dias_optimos
+    p_critico     = (dias_criticos / total_dias) * 100
+    p_medio       = (dias_medios   / total_dias) * 100
+    p_optimo      = (dias_optimos  / total_dias) * 100
+
+    color_gris   = "#95a5a6"
+    color_cielo  = "#a5e4ff"
+    color_oscuro = "#2e68b1"
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(f"<h3 style='color:{color_gris}; margin-bottom:0;'> {formato_chileno(p_critico, 1)}%</h3>", unsafe_allow_html=True)
+        st.markdown(f"<p style='color:{color_gris}; font-weight:bold; margin-bottom:0;'>Crítico (<10%)</p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='color:{color_gris}; font-size:0.8rem;'>Reserva mínima: {dias_criticos} días.</p>", unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"<h3 style='color:{color_cielo}; margin-bottom:0;'> {formato_chileno(p_medio, 1)}%</h3>", unsafe_allow_html=True)
+        st.markdown(f"<p style='color:{color_cielo}; font-weight:bold; margin-bottom:0;'>Estado Operativo</p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='color:{color_cielo}; font-size:0.8rem;'>Nivel funcional: {dias_medios} días.</p>", unsafe_allow_html=True)
+    with c3:
+        st.markdown(f"<h3 style='color:{color_oscuro}; margin-bottom:0;'> {formato_chileno(p_optimo, 1)}%</h3>", unsafe_allow_html=True)
+        st.markdown(f"<p style='color:{color_oscuro}; font-weight:bold; margin-bottom:0;'>Seguridad (>80%)</p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='color:{color_oscuro}; font-size:0.8rem;'>Autonomía total: {dias_optimos} días.</p>", unsafe_allow_html=True)
+
+    st.markdown(f"""
+    <div style="display: flex; width: 100%; height: 26px; border-radius: 13px;
+                overflow: hidden; margin-top: 15px;
+                border: 1px solid rgba(255,255,255,0.1);
+                box-shadow: inset 0px 2px 4px rgba(0,0,0,0.3);">
+        <div style="width: {p_critico}%; background-color: {color_gris};"></div>
+        <div style="width: {p_medio}%; background-color: {color_cielo};"></div>
+        <div style="width: {p_optimo}%; background-color: {color_oscuro};"></div>
+    </div>
+    <div style="display: flex; width: 100%; font-size: 11px; font-weight: bold;
+                color: {color_cielo}; padding-top: 8px;">
+        <div style="width: {p_critico}%;"></div>
+        <div style="width: {p_medio}%; text-align: center; letter-spacing: 1px;">ESTADO OPERATIVO</div>
+        <div style="width: {p_optimo}%;"></div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Tabla diaria
+    cols_a_eliminar = ['Fecha Pura', 'Mes_Dia', 'Eje X', 'Eje X Real', 'Agua Acumulada Teórica (L)', 'tipo']
+    df_view = df_slice.drop(columns=[c for c in cols_a_eliminar if c in df_slice.columns])
+    df_estilizado = df_view.style.apply(colorear_filas_diarias, axis=1).format({
+        "Lluvia (mm)":        lambda x: formato_chileno(x, 2),
+        "Captado (L)":        lambda x: formato_chileno(x, 1),
+        "Demanda (L)":        lambda x: formato_chileno(x, 1),
+        "Estanque Final (L)": lambda x: formato_chileno(x, 0),
+        "Rebalse (L)":        lambda x: formato_chileno(x, 0),
+        "Déficit Diario (L)": lambda x: formato_chileno(x, 0),
+    }).hide(axis="index")
+
+    st.write(f"####  Tabla Diaria de la Simulación")
+    st.dataframe(df_estilizado, use_container_width=True, height=400)
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df_view.to_excel(writer, index=False, sheet_name=nombre[:31])
+    buffer.seek(0)
+    st.download_button(
+        label=f"📥 Exportar {nombre}", data=buffer,
+        file_name=f"balance_{nombre.replace(' ', '_')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=f"btn_{nombre}{key_suffix}"
+    )
+
 
 # ===============================================================
 # TABS
@@ -390,12 +681,10 @@ with tab1:
             with st.spinner("Construyendo modelos y ejecutando la simulación..."):
 
                 try:
-                    df_est_crudas, df_diario, df_mensual, codigos = cargar_datos_crudos()
-                except ValueError as e:
+                    df_estaciones, df_diario, df_mensual, df_est_crudas, codigos = aplicar_filtro_calidad(umbral_calidad, "2000", "2020")
+                except (FileNotFoundError, ValueError) as e:
                     st.error(f"⚠️ **Error en los datos:** {e}")
                     st.stop()
-
-                df_estaciones, df_diario, df_mensual = aplicar_filtro_calidad(umbral_calidad)
 
                 if df_estaciones.empty:
                     st.error(f"⚠️ Ninguna estación cumple con el estándar de {umbral_calidad}% de calidad.")
@@ -605,222 +894,9 @@ with tab1:
                 st.write("###  Tablas y Diseño por Escenario")
                 tab_n, tab_s, tab_ll = st.tabs([" Año Normal", "Año Seco", " Año Lluvioso"])
 
-                def colorear_filas_diarias(row):
-                    estilos = [""] * len(row)
-                    idx_sd  = list(row.index).index("Déficit Diario (L)")
-                    if row["Déficit Diario (L)"] == 0:
-                        estilos[idx_sd] = "background-color: #d4edda; color: #155724; font-weight: bold"
-                    else:
-                        estilos[idx_sd] = "background-color: #f8d7da; color: #721c24; font-weight: bold"
-                    return estilos
-
-                def mostrar_detalles_escenario(df_slice, nombre):
-                    total_captado      = df_slice['Captado (L)'].sum()
-                    total_demanda      = df_slice['Demanda (L)'].sum()
-                    deficit_total      = df_slice['Déficit Diario (L)'].sum()
-                    total_suministrado = total_demanda + deficit_total
-                    pct_cubierto       = (total_suministrado / total_demanda * 100) if total_demanda > 0 else 100
-                    dias_sin_agua      = (df_slice['Déficit Diario (L)'] < 0).sum()
-
-                    st.write("#### Indicadores Clave de Desempeño (KPIs)")
-                    st.caption("**Fórmula de Balance:** *Total Potencial a Captar = "
-                               "Agua Consumida + Agua Almacenada + Agua Perdida por Rebalse*")
-
-                    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-                    kpi1.metric("💧 Total Potencial a Captar", f"{formato_chileno(total_captado, 0)} L")
-                    kpi2.metric("🎯 Demanda Cubierta",         f"{formato_chileno(pct_cubierto, 1)} %")
-                    kpi3.metric("🚨 Días sin agua",            f"{dias_sin_agua} días")
-                    kpi4.metric("🌊 Rebalse",                  f"{formato_chileno(df_slice['Rebalse (L)'].sum(), 0)} L")
-                    st.markdown("---")
-
-                    st.write(f"#### Nivel del Estanque: {nombre}")
-                    y_vals     = df_slice["Agua Acumulada Teórica (L)"]
-                    y_min, y_max = y_vals.min(), y_vals.max()
-                    margen_inf = max(abs(y_min) * 0.4, capacidad_maxima * 0.20)
-                    margen_sup = max((y_max - capacidad_maxima) * 0.25, capacidad_maxima * 0.15)
-
-                    fig_nivel = go.Figure()
-                    fig_nivel.add_trace(go.Scatter(
-                        x=df_slice["Eje X"], y=y_vals, mode='lines', fill='tozeroy',
-                        name="Acumulado Teórico", line=dict(color='#3498db', width=2),
-                        fillcolor='rgba(52, 152, 219, 0.25)',
-                        hovertemplate="<b>%{x|%d %b}</b><br>Nivel: %{y:,.0f} L<extra></extra>"
-                    ))
-                    fig_nivel.add_hline(
-                        y=capacidad_maxima, line_dash="dash", line_color="red", line_width=2,
-                        annotation_text=f"Capacidad máxima: {formato_chileno(capacidad_maxima, 0)} L",
-                        annotation_position="top left", annotation_font=dict(color="red", size=12)
-                    )
-                    fig_nivel.add_hline(
-                        y=0, line_dash="dot", line_color="orange", line_width=1.5,
-                        annotation_text="Sin agua", annotation_position="bottom right",
-                        annotation_font=dict(color="orange", size=11)
-                    )
-                    fig_nivel.update_layout(
-                        yaxis=dict(title="Volumen (Litros)",
-                                   range=[y_min - margen_inf, y_max + margen_sup], tickformat=","),
-                        xaxis=dict(title="Meses del Año", dtick="M1", tickformat="%b",
-                                   showgrid=True, gridcolor="rgba(200,200,200,0.4)"),
-                        height=400, margin=dict(t=20, b=50, l=60, r=20),
-                        plot_bgcolor="rgba(0,0,0,0)", showlegend=False
-                    )
-                    st.plotly_chart(fig_nivel, use_container_width=True,
-                                    config={'scrollZoom': False, 'displayModeBar': True})
-                    st.markdown("---")
-
-                    st.write("####  Curva de Optimización del Estanque")
-                    capacidades_prueba, eficiencias, cap_optima, ef_actual, ef_optima = \
-                        calcular_curva_optimizacion(df_slice, capacidad_maxima)
-
-                    col_opt1, col_opt2 = st.columns(2)
-                    col_opt1.metric(
-                        " Tamaño Óptimo del Estanque",
-                        f"{formato_chileno(cap_optima, 0)} L",
-                        help="Punto eficiente donde la curva se estabiliza o alcanza el 95%."
-                    )
-                    col_opt2.metric(
-                        " Cobertura con Tu Estanque",
-                        f"{formato_chileno(ef_actual, 1)} %",
-                        delta=f"{formato_chileno(ef_actual - ef_optima, 1)} % vs óptimo"
-                    )
-
-                    fig_opt = go.Figure()
-                    fig_opt.add_trace(go.Scatter(
-                        x=capacidades_prueba, y=eficiencias, mode='lines+markers',
-                        name='Cobertura (%)', line=dict(color='#3498db', width=3)
-                    ))
-                    fig_opt.add_vline(x=capacidad_maxima, line_dash="dash", line_color="#e74c3c",
-                                      line_width=2,
-                                      annotation_text=f"Tu Estanque\n({capacidad_maxima:,.0f} L)",
-                                      annotation_position="bottom right")
-                    fig_opt.add_vline(x=cap_optima, line_dash="dash", line_color="#2ecc71",
-                                      line_width=2,
-                                      annotation_text=f"Óptimo\n({cap_optima:,.0f} L)",
-                                      annotation_position="top left")
-                    fig_opt.update_layout(yaxis_title="% Demanda Anual Cubierta",
-                                          xaxis_title="Capacidad Estanque (L)", margin=dict(b=40))
-                    st.plotly_chart(fig_opt, use_container_width=True,
-                                    config={'scrollZoom': False, 'displayModeBar': True})
-
-                    # Balance humano
-                    st.markdown("---")
-                    st.write("#### Resumen de Abastecimiento Humano")
-                    aporte_real_persona = (total_suministrado / total_demanda) * litros_persona_dia \
-                        if total_demanda > 0 else 0
-
-                    col_tank, col_persona = st.columns(2)
-                    with col_tank:
-                        st.metric(
-                            label="Volumen Total Cubierto",
-                            value=f"{formato_chileno(total_suministrado, 0)} L",
-                            delta=f"de {formato_chileno(total_demanda, 0)} L demandados en el año",
-                            delta_color="off"
-                        )
-                        porcentaje_limite = min(pct_cubierto, 100.0)
-                        st.markdown(f"""
-                        <div style="margin-top: 15px;">
-                            <div style="font-weight: bold; font-size: 14.5px; margin-bottom: 6px;
-                                        color: #d4f7ff; letter-spacing: 0.5px;">
-                                El estanque cubrió el {formato_chileno(pct_cubierto, 1)}% de la necesidad
-                            </div>
-                            <div style="background-color: rgba(255,255,255,0.08); border-radius: 8px;
-                                        height: 22px; width: 100%; position: relative; overflow: hidden;
-                                        border: 1px solid rgba(255,255,255,0.15);
-                                        box-shadow: inset 0px 4px 6px rgba(0,0,0,0.4);">
-                                <div style="background-color: #3498db; width: {porcentaje_limite}%;
-                                            height: 100%; position: absolute; left: 0; top: 0;
-                                            transition: width 1s ease-in-out;
-                                            box-shadow: 2px 0px 4px rgba(0,0,0,0.3);"></div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                    with col_persona:
-                        st.metric(
-                            label=" Agua Asegurada por Persona",
-                            value=f"{formato_chileno(aporte_real_persona, 1)} L/día",
-                            delta=f"Meta original: {litros_persona_dia} L/día",
-                            delta_color="off"
-                        )
-                    st.markdown("<br>", unsafe_allow_html=True)
-
-                    # Seguridad hídrica
-                    st.markdown("---")
-                    st.write("#### Análisis de Seguridad y Disponibilidad")
-
-                    total_dias    = len(df_slice)
-                    dias_criticos = (df_slice['Estanque Final (L)'] < (capacidad_maxima * 0.10)).sum()
-                    dias_optimos  = (df_slice['Estanque Final (L)'] > (capacidad_maxima * 0.80)).sum()
-                    dias_medios   = total_dias - dias_criticos - dias_optimos
-                    p_critico     = (dias_criticos / total_dias) * 100
-                    p_medio       = (dias_medios   / total_dias) * 100
-                    p_optimo      = (dias_optimos  / total_dias) * 100
-
-                    color_gris   = "#95a5a6"
-                    color_cielo  = "#a5e4ff"
-                    color_oscuro = "#2e68b1"
-
-                    c1, c2, c3 = st.columns(3)
-                    with c1:
-                        st.markdown(f"<h3 style='color:{color_gris}; margin-bottom:0;'> {formato_chileno(p_critico, 1)}%</h3>", unsafe_allow_html=True)
-                        st.markdown(f"<p style='color:{color_gris}; font-weight:bold; margin-bottom:0;'>Crítico (<10%)</p>", unsafe_allow_html=True)
-                        st.markdown(f"<p style='color:{color_gris}; font-size:0.8rem;'>Reserva mínima: {dias_criticos} días.</p>", unsafe_allow_html=True)
-                    with c2:
-                        st.markdown(f"<h3 style='color:{color_cielo}; margin-bottom:0;'> {formato_chileno(p_medio, 1)}%</h3>", unsafe_allow_html=True)
-                        st.markdown(f"<p style='color:{color_cielo}; font-weight:bold; margin-bottom:0;'>Estado Operativo</p>", unsafe_allow_html=True)
-                        st.markdown(f"<p style='color:{color_cielo}; font-size:0.8rem;'>Nivel funcional: {dias_medios} días.</p>", unsafe_allow_html=True)
-                    with c3:
-                        st.markdown(f"<h3 style='color:{color_oscuro}; margin-bottom:0;'> {formato_chileno(p_optimo, 1)}%</h3>", unsafe_allow_html=True)
-                        st.markdown(f"<p style='color:{color_oscuro}; font-weight:bold; margin-bottom:0;'>Seguridad (>80%)</p>", unsafe_allow_html=True)
-                        st.markdown(f"<p style='color:{color_oscuro}; font-size:0.8rem;'>Autonomía total: {dias_optimos} días.</p>", unsafe_allow_html=True)
-
-                    st.markdown(f"""
-                    <div style="display: flex; width: 100%; height: 26px; border-radius: 13px;
-                                overflow: hidden; margin-top: 15px;
-                                border: 1px solid rgba(255,255,255,0.1);
-                                box-shadow: inset 0px 2px 4px rgba(0,0,0,0.3);">
-                        <div style="width: {p_critico}%; background-color: {color_gris};"></div>
-                        <div style="width: {p_medio}%; background-color: {color_cielo};"></div>
-                        <div style="width: {p_optimo}%; background-color: {color_oscuro};"></div>
-                    </div>
-                    <div style="display: flex; width: 100%; font-size: 11px; font-weight: bold;
-                                color: {color_cielo}; padding-top: 8px;">
-                        <div style="width: {p_critico}%;"></div>
-                        <div style="width: {p_medio}%; text-align: center; letter-spacing: 1px;">ESTADO OPERATIVO</div>
-                        <div style="width: {p_optimo}%;"></div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    st.markdown("<br>", unsafe_allow_html=True)
-
-                    # Tabla diaria
-                    df_view = df_slice.drop(columns=['Fecha Pura', 'Mes_Dia', 'Eje X',
-                                                     'Agua Acumulada Teórica (L)'])
-                    df_estilizado = df_view.style.apply(colorear_filas_diarias, axis=1).format({
-                        "Lluvia (mm)":        lambda x: formato_chileno(x, 2),
-                        "Captado (L)":        lambda x: formato_chileno(x, 1),
-                        "Demanda (L)":        lambda x: formato_chileno(x, 1),
-                        "Estanque Final (L)": lambda x: formato_chileno(x, 0),
-                        "Rebalse (L)":        lambda x: formato_chileno(x, 0),
-                        "Déficit Diario (L)": lambda x: formato_chileno(x, 0),
-                    }).hide(axis="index")
-
-                    st.write(f"####  Tabla Diaria de la Simulación")
-                    st.dataframe(df_estilizado, use_container_width=True, height=400)
-
-                    buffer = io.BytesIO()
-                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                        df_view.to_excel(writer, index=False, sheet_name=nombre)
-                    buffer.seek(0)
-                    st.download_button(
-                        label=f"📥 Exportar {nombre}", data=buffer,
-                        file_name=f"balance_{nombre.replace(' ', '_')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key=f"btn_{nombre}"
-                    )
-
-                with tab_n:  mostrar_detalles_escenario(df_normal,   "Año Normal")
-                with tab_s:  mostrar_detalles_escenario(df_seco,     "Año Seco")
-                with tab_ll: mostrar_detalles_escenario(df_lluvioso, "Año Lluvioso")
+                with tab_n:  mostrar_detalles_escenario(df_normal,   "Año Normal",   key_suffix="_normal")
+                with tab_s:  mostrar_detalles_escenario(df_seco,     "Año Seco",     key_suffix="_seco")
+                with tab_ll: mostrar_detalles_escenario(df_lluvioso, "Año Lluvioso", key_suffix="_lluvioso")
 
                 promedios_m = lluvias_mensuales.groupby('Mes')[codigo_estacion].mean()
                 promedios_m = promedios_m.reindex([f"{i:02d}" for i in range(1, 13)]).fillna(0)
