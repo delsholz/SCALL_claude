@@ -9,6 +9,9 @@ venv/
 # Streamlit (solo ignorar secretos, no el config de tema)
 .streamlit/secrets.toml
 
+# Claude Code local settings
+.claude/settings.local.json
+
 # OS
 .DS_Store
 Thumbs.db

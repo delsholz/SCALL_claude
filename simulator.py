@@ -163,12 +163,23 @@ def calcular_curva_optimizacion(df_slice, capacidad_maxima):
                 cap_optima = cp
                 break
     else:
-        # Método del codo: primer punto donde la ganancia marginal cae bajo 1%/1000 L
-        # Esto evita recomendar estanques diminutos en años de sequía
-        for i in range(1, len(eficiencias)):
-            if (eficiencias[i] - eficiencias[i - 1]) < 1.0:
-                cap_optima = capacidades_prueba[i]
-                break
+        # Algoritmo Kneedle para curva cóncava (ganancias decrecientes):
+        # normalizamos ambos ejes a [0,1] y buscamos el punto donde la curva
+        # se desvía más por encima de la diagonal → max(y_norm - x_norm).
+        # Ese punto es donde la ganancia marginal relativa es máxima antes
+        # de que la curva empiece a aplanarse.
+        x = np.array(capacidades_prueba, dtype=float)
+        y = np.array(eficiencias, dtype=float)
+        rng_x = x[-1] - x[0]
+        rng_y = y[-1] - y[0]
+        if rng_x > 0 and rng_y > 0:
+            x_n = (x - x[0]) / rng_x
+            y_n = (y - y[0]) / rng_y
+            # Curva cóncava: y_n > x_n en la zona de máxima ganancia relativa
+            distancias = y_n - x_n
+            cap_optima = capacidades_prueba[int(np.argmax(distancias))]
+        else:
+            cap_optima = capacidades_prueba[-1]
 
     idx_cercano = (np.abs(np.array(capacidades_prueba) - capacidad_maxima)).argmin()
     ef_actual   = eficiencias[idx_cercano]

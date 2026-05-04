@@ -472,11 +472,13 @@ def mostrar_detalles_escenario(df_slice, nombre, key_suffix=""):
 
     fig_opt = go.Figure()
 
-    # Curva principal con relleno
+    # Curva principal con puntos en cada simulación
     fig_opt.add_trace(go.Scatter(
         x=capacidades_prueba, y=eficiencias,
-        mode='lines', name='Cobertura (%)',
-        line=dict(color='#3498db', width=2.5),
+        mode='lines+markers', name='Cobertura (%)',
+        line=dict(color='#3498db', width=2),
+        marker=dict(size=6, color='#3498db', symbol='circle',
+                    line=dict(color='white', width=1)),
         fill='tozeroy', fillcolor='rgba(52,152,219,0.10)',
         hovertemplate="<b>%{x:,.0f} L</b><br>Cobertura: %{y:.1f}%<extra></extra>"
     ))
