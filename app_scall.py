@@ -5,6 +5,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 import io
 import requests
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import matplotlib.ticker as mticker
 
 from fpdf import FPDF
 
@@ -12,6 +17,46 @@ from utils import formato_chileno, calcular_distancia_vectorizada
 from data_loader import cargar_datos_crudos, aplicar_filtro_calidad
 from simulator import (simular_continua, simular_escenario,
                        encontrar_anios_extremos, calcular_curva_optimizacion)
+
+
+_MESES_ES = {1:'Ene',2:'Feb',3:'Mar',4:'Abr',5:'May',6:'Jun',
+             7:'Jul',8:'Ago',9:'Sep',10:'Oct',11:'Nov',12:'Dic'}
+
+def _generar_grafico_estanque_pdf(df_normal, capacidad_maxima):
+    eje_x  = pd.to_datetime(df_normal['Eje X'])
+    y_vals = df_normal['Agua Acumulada Teórica (L)'].values
+
+    fig, ax = plt.subplots(figsize=(9.5, 2.8))
+    ax.fill_between(eje_x, y_vals, alpha=0.25, color='#3498db')
+    ax.plot(eje_x, y_vals, color='#3498db', linewidth=1.5, label='Nivel del estanque')
+    ax.axhline(y=capacidad_maxima, color='#e74c3c', linestyle='--', linewidth=1.5,
+               label=f'Capacidad: {capacidad_maxima:,.0f} L')
+    ax.axhline(y=0, color='#e67e22', linestyle=':', linewidth=1.2, label='Sin agua')
+
+    def _fmt_mes(x, _):
+        try:
+            return _MESES_ES.get(mdates.num2date(x).month, '')
+        except Exception:
+            return ''
+
+    ax.xaxis.set_major_locator(mdates.MonthLocator())
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(_fmt_mes))
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'{x:,.0f}'))
+    ax.tick_params(axis='both', labelsize=7.5)
+    ax.set_ylabel('Volumen (L)', fontsize=8)
+    ax.legend(fontsize=7.5, loc='upper right', framealpha=0.85)
+    ax.set_facecolor('#f8f9fa')
+    ax.grid(axis='y', color='gray', alpha=0.2)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    fig.patch.set_facecolor('white')
+    plt.tight_layout(pad=0.4)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    buf.seek(0)
+    return buf
 
 
 # ===============================================================
@@ -193,14 +238,22 @@ def generar_informe_pdf(d):
 
     y += 3
 
+    # ── SECCIÓN: GRÁFICO NIVEL DEL ESTANQUE ──────────────────
+    y = sec_title(f"NIVEL DEL ESTANQUE - ANO NORMAL ({d['anio_mediano']})", y)
+    try:
+        chart_img = _generar_grafico_estanque_pdf(d["df_normal"], d["capacidad_maxima"])
+        pdf.image(chart_img, x=10, y=y, w=190)
+        y += 60
+    except Exception:
+        pass
+
+    y += 4
+
     # ── SECCIÓN: TAMAÑO OPTIMO ────────────────────────────────
     y = sec_title("TAMANO OPTIMO DEL ESTANQUE (Ano Normal)", y)
 
-    # Nota: Asegúrate de tener importada calcular_curva_optimizacion
-    from simulator import calcular_curva_optimizacion
-    caps, efs, cap_opt, ef_act, ef_opt = calcular_curva_optimizacion(
-        d["df_normal"], d["capacidad_maxima"]
-    )
+    curva = d.get("curva_normal") or calcular_curva_optimizacion(d["df_normal"], d["capacidad_maxima"])
+    caps, efs, cap_opt, ef_act, ef_opt = curva
 
     kpis = [
         ("Estanque actual",            f"{d['capacidad_maxima']:,.0f} L",
@@ -397,7 +450,7 @@ def colorear_filas_diarias(row):
     return estilos
 
 
-def mostrar_detalles_escenario(df_slice, nombre, key_suffix=""):
+def mostrar_detalles_escenario(df_slice, nombre, key_suffix="", curva_opt=None):
     total_captado      = df_slice['Captado (L)'].sum()
     total_demanda      = df_slice['Demanda (L)'].sum()
     deficit_total      = df_slice['Déficit Diario (L)'].sum()
@@ -454,8 +507,9 @@ def mostrar_detalles_escenario(df_slice, nombre, key_suffix=""):
     st.markdown("---")
 
     st.write("####  Curva de Optimización del Estanque")
-    capacidades_prueba, eficiencias, cap_optima, ef_actual, ef_optima = \
-        calcular_curva_optimizacion(df_slice, capacidad_maxima)
+    if curva_opt is None:
+        curva_opt = calcular_curva_optimizacion(df_slice, capacidad_maxima)
+    capacidades_prueba, eficiencias, cap_optima, ef_actual, ef_optima = curva_opt
 
     col_opt1, col_opt2 = st.columns(2)
     col_opt1.metric(
@@ -728,7 +782,7 @@ with tab1:
                 # Calculamos el desnivel real (positivo si el proyecto está más alto)
                 desnivel_real = (alt_proyecto - alt_estacion) if not pd.isna(alt_estacion) else 0.0
                 desnivel_abs = abs(desnivel_real)
-                desnivel = desnivel_abs  # <--- AGREGA ESTA LÍNEA
+                desnivel = desnivel_abs
                 
                 # Fórmula del Gradiente Orográfico
                 variacion_pct = (coef_orografico / 100.0) * (desnivel_real / 100.0)
@@ -896,9 +950,13 @@ with tab1:
                 st.write("###  Tablas y Diseño por Escenario")
                 tab_n, tab_s, tab_ll = st.tabs([" Año Normal", "Año Seco", " Año Lluvioso"])
 
-                with tab_n:  mostrar_detalles_escenario(df_normal,   "Año Normal",   key_suffix="_normal")
-                with tab_s:  mostrar_detalles_escenario(df_seco,     "Año Seco",     key_suffix="_seco")
-                with tab_ll: mostrar_detalles_escenario(df_lluvioso, "Año Lluvioso", key_suffix="_lluvioso")
+                curva_normal   = calcular_curva_optimizacion(df_normal,   capacidad_maxima)
+                curva_seco     = calcular_curva_optimizacion(df_seco,     capacidad_maxima)
+                curva_lluvioso = calcular_curva_optimizacion(df_lluvioso, capacidad_maxima)
+
+                with tab_n:  mostrar_detalles_escenario(df_normal,   "Año Normal",   key_suffix="_normal",   curva_opt=curva_normal)
+                with tab_s:  mostrar_detalles_escenario(df_seco,     "Año Seco",     key_suffix="_seco",     curva_opt=curva_seco)
+                with tab_ll: mostrar_detalles_escenario(df_lluvioso, "Año Lluvioso", key_suffix="_lluvioso", curva_opt=curva_lluvioso)
 
                 promedios_m = lluvias_mensuales.groupby('Mes')[codigo_estacion].mean()
                 promedios_m = promedios_m.reindex([f"{i:02d}" for i in range(1, 13)]).fillna(0)
@@ -913,6 +971,7 @@ with tab1:
                 }
 
                 st.session_state['informe_datos'] = {
+                    'curva_normal':           curva_normal,
                     'nombre_proyecto':        nombre_proyecto,
                     'lat_proyecto':           lat_proyecto,
                     'lon_proyecto':           lon_proyecto,
