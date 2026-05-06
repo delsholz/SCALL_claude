@@ -127,8 +127,8 @@ def generar_informe_pdf(d):
         pdf.set_text_color(*BLANCO)
         pdf.set_font("Helvetica", "B", 9)
         pdf.set_xy(10, y)
-        pdf.cell(190, 7, f"  {titulo}", fill=True)
-        return y + 9
+        pdf.cell(190, 7, f"  {titulo}", fill=True, ln=True)
+        return pdf.get_y()
 
     def kv(label, valor, y, x=10, w_label=62, w_val=83, alt=False):
         bg = GRIS if alt else BLANCO
@@ -243,11 +243,9 @@ def generar_informe_pdf(d):
     try:
         chart_img = _generar_grafico_estanque_pdf(d["df_normal"], d["capacidad_maxima"])
         pdf.image(chart_img, x=10, y=y, w=190)
-        y += 60
+        y = pdf.get_y() + 4
     except Exception:
         pass
-
-    y += 4
 
     # ── SECCIÓN: TAMAÑO OPTIMO ────────────────────────────────
     y = sec_title("TAMANO OPTIMO DEL ESTANQUE (Ano Normal)", y)
@@ -301,9 +299,12 @@ def generar_informe_pdf(d):
     pdf.set_text_color(*NEGRO)
     for linea in lineas:
         pdf.set_font("Helvetica", "", 8.5)
+        if y > pdf.h - pdf.b_margin - 20:
+            pdf.add_page()
+            y = 15
         pdf.set_xy(10, y)
         pdf.multi_cell(190, 5.5, linea)
-        y += 6
+        y = pdf.get_y() + 2
 
     # ── FOOTER ────────────────────────────────────────────────
     pdf.set_y(-12)
