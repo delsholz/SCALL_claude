@@ -23,6 +23,8 @@ _MESES_ES = {1:'Ene',2:'Feb',3:'Mar',4:'Abr',5:'May',6:'Jun',
              7:'Jul',8:'Ago',9:'Sep',10:'Oct',11:'Nov',12:'Dic'}
 
 def _generar_grafico_estanque_pdf(df_normal, capacidad_maxima):
+    import struct
+
     eje_x  = pd.to_datetime(df_normal['Eje X'])
     y_vals = df_normal['Agua Acumulada Teórica (L)'].values
 
@@ -55,8 +57,15 @@ def _generar_grafico_estanque_pdf(df_normal, capacidad_maxima):
     buf = io.BytesIO()
     fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
     plt.close(fig)
+
+    # Leer dimensiones reales del PNG para calcular altura en el PDF
+    buf.seek(16)
+    w_px = struct.unpack('>I', buf.read(4))[0]
+    h_px = struct.unpack('>I', buf.read(4))[0]
+    h_mm = 190.0 * h_px / w_px  # altura proporcional a 190mm de ancho
+
     buf.seek(0)
-    return buf
+    return buf, h_mm
 
 
 # ===============================================================
@@ -241,13 +250,16 @@ def generar_informe_pdf(d):
     # ── SECCIÓN: GRÁFICO NIVEL DEL ESTANQUE ──────────────────
     y = sec_title(f"NIVEL DEL ESTANQUE - ANO NORMAL ({d['anio_mediano']})", y)
     try:
-        chart_img = _generar_grafico_estanque_pdf(d["df_normal"], d["capacidad_maxima"])
+        chart_img, chart_h_mm = _generar_grafico_estanque_pdf(d["df_normal"], d["capacidad_maxima"])
         pdf.image(chart_img, x=10, y=y, w=190)
-        y = pdf.get_y() + 4
+        y += chart_h_mm + 4
     except Exception:
         pass
 
     # ── SECCIÓN: TAMAÑO OPTIMO ────────────────────────────────
+    if y > pdf.h - pdf.b_margin - 50:
+        pdf.add_page()
+        y = 15
     y = sec_title("TAMANO OPTIMO DEL ESTANQUE (Ano Normal)", y)
 
     curva = d.get("curva_normal") or calcular_curva_optimizacion(d["df_normal"], d["capacidad_maxima"])
