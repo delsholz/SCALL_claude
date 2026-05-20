@@ -253,8 +253,12 @@ def generar_informe_pdf(d):
         chart_img, chart_h_mm = _generar_grafico_estanque_pdf(d["df_normal"], d["capacidad_maxima"])
         pdf.image(chart_img, x=10, y=y, w=190)
         y += chart_h_mm + 4
-    except Exception:
-        pass
+    except Exception as e:
+        pdf.set_xy(10, y)
+        pdf.set_font("Helvetica", "I", 8)
+        pdf.set_text_color(150, 150, 150)
+        pdf.cell(190, 10, f"[Grafico no disponible]", align="C")
+        y += 14
 
     # ── SECCIÓN: TAMAÑO OPTIMO ────────────────────────────────
     if y > pdf.h - pdf.b_margin - 50:
@@ -408,40 +412,59 @@ lon_proyecto = st.sidebar.number_input("Longitud", value=-70.6500, format="%.4f"
 if st.sidebar.button("📍 Obtener altitud automáticamente"):
     with st.sidebar:
         with st.spinner("Consultando altitud..."):
-            try:
-                resp = requests.get(
-                    f"https://api.opentopodata.org/v1/srtm90m?locations={lat_proyecto},{lon_proyecto}",
-                    timeout=8
-                )
-                data = resp.json()
-                if data.get("status") == "OK":
-                    elev = data["results"][0]["elevation"]
-                    st.session_state['alt_auto'] = int(round(elev))
-                else:
-                    st.sidebar.warning("No se pudo obtener la altitud.")
-            except Exception:
-                st.sidebar.warning("Error al conectar con el servicio de altitud. Ingresa el valor manualmente.")
+            elev = None
+
+            # Intento 1: OpenTopoData (hasta 2 intentos)
+            for _ in range(2):
+                try:
+                    resp = requests.get(
+                        f"https://api.opentopodata.org/v1/srtm90m?locations={lat_proyecto},{lon_proyecto}",
+                        timeout=6
+                    )
+                    data = resp.json()
+                    if data.get("status") == "OK":
+                        elev = int(round(data["results"][0]["elevation"]))
+                        break
+                except Exception:
+                    pass
+
+            # Intento 2: Open-Meteo como respaldo
+            if elev is None:
+                try:
+                    resp2 = requests.get(
+                        f"https://api.open-meteo.com/v1/elevation?latitude={lat_proyecto}&longitude={lon_proyecto}",
+                        timeout=6
+                    )
+                    data2 = resp2.json()
+                    if "elevation" in data2 and data2["elevation"]:
+                        elev = int(round(data2["elevation"][0]))
+                except Exception:
+                    pass
+
+            if elev is not None:
+                st.session_state['alt_auto'] = elev
+            else:
+                st.sidebar.warning("No se pudo obtener la altitud automáticamente. Ingresa el valor manualmente.")
 
 alt_default = int(st.session_state.get('alt_auto', 500))
 alt_proyecto = st.sidebar.number_input("Altitud (m.s.n.m.)", value=alt_default, step=10)
 
-st.sidebar.subheader("Corrección por Altitud")
-coef_altitud = st.sidebar.slider(
-    "Coeficiente de corrección altitudinal (k)",
-    min_value=1, max_value=20, value=5, step=1,
-    help=(
-        "Controla cuánto 'pesa' la diferencia de altura al buscar la estación más cercana.\n\n"
-        "k=1 → 1 km de desnivel = 1 km horizontal\n"
-        "k=5 → 1 km de desnivel = 5 km horizontales\n"
-        "k=20 → prioriza fuertemente estaciones a altitud similar\n\n"
-        "Sube el valor si tu zona tiene fuerte variación de lluvia con la altura."
-    )
-)
+coef_altitud = 5
 st.sidebar.subheader("Gradiente Orográfico (Lluvia vs Altura)")
 coef_orografico = st.sidebar.slider(
     "Variación de lluvia (% por cada 100m de desnivel)",
     min_value=-15.0, max_value=15.0, value=0.0, step=1.0,
-    help="Ajusta físicamente los milímetros de lluvia. Si tu proyecto está más alto que la estación meteorológica, usualmente llueve más (usa valores positivos). Si está a sotavento, podría llover menos (usa negativos)."
+    help=(
+        "Ajusta los mm de lluvia de la estación para reflejar la diferencia de altura con tu proyecto. "
+        "A diferencia del coeficiente k, este parámetro SÍ modifica la lluvia simulada.\n\n"
+        "Referencia rápida:\n"
+        "• Valle / costa plana → 0%\n"
+        "• Precordillera (proyecto más alto) → +3% a +7%\n"
+        "• Cordillera alta (proyecto más alto) → +5% a +12%\n"
+        "• Sotavento / sombra de lluvia → −5% a −10%\n\n"
+        "Default 0%: sin ajuste. Úsalo solo si conoces el comportamiento del terreno; "
+        "un ajuste incorrecto introduce más error que dejarlo en 0."
+    )
 )
 
 st.title("💧 Simulador de Cosecha de Aguas Lluvias SCALL")
@@ -573,27 +596,45 @@ def mostrar_detalles_escenario(df_slice, nombre, key_suffix="", curva_opt=None):
             hovertemplate=f"Óptimo: {cap_optima:,.0f} L<br>Cobertura: {ef_optima:.1f}%<extra></extra>"
         ))
 
-    # Líneas verticales con posición inteligente según cuál es mayor
+    # Líneas verticales con anotaciones escalonadas verticalmente para evitar superposición
     if abs(cap_optima - capacidad_maxima) > 1000:
         opt_es_mayor = cap_optima > capacidad_maxima
         fig_opt.add_vline(
-            x=capacidad_maxima, line_dash="solid", line_color="#e74c3c", line_width=1.5,
-            annotation_text=f"Tu Estanque<br>{capacidad_maxima:,.0f} L | {ef_actual:.1f}%",
-            annotation_position="top right" if opt_es_mayor else "top left",
-            annotation_font=dict(color="#e74c3c", size=10)
+            x=capacidad_maxima, line_dash="solid", line_color="#e74c3c", line_width=1.5
+        )
+        fig_opt.add_annotation(
+            x=capacidad_maxima, xref="x",
+            y=0.97, yref="paper",
+            text=f"Tu Estanque<br>{capacidad_maxima:,.0f} L | {ef_actual:.1f}%",
+            showarrow=False,
+            font=dict(color="#e74c3c", size=10),
+            xanchor="right" if opt_es_mayor else "left",
+            yanchor="top",
         )
         fig_opt.add_vline(
-            x=cap_optima, line_dash="dash", line_color="#2ecc71", line_width=1.5,
-            annotation_text=f"Óptimo<br>{cap_optima:,.0f} L | {ef_optima:.1f}%",
-            annotation_position="top left" if opt_es_mayor else "top right",
-            annotation_font=dict(color="#2ecc71", size=10)
+            x=cap_optima, line_dash="dash", line_color="#2ecc71", line_width=1.5
+        )
+        fig_opt.add_annotation(
+            x=cap_optima, xref="x",
+            y=0.74, yref="paper",
+            text=f"Óptimo<br>{cap_optima:,.0f} L | {ef_optima:.1f}%",
+            showarrow=False,
+            font=dict(color="#2ecc71", size=10),
+            xanchor="left" if opt_es_mayor else "right",
+            yanchor="top",
         )
     else:
         fig_opt.add_vline(
-            x=capacidad_maxima, line_dash="dash", line_color="#2ecc71", line_width=1.5,
-            annotation_text=f"Tu Estanque ≈ Óptimo<br>{capacidad_maxima:,.0f} L | {ef_actual:.1f}%",
-            annotation_position="top left",
-            annotation_font=dict(color="#2ecc71", size=10)
+            x=capacidad_maxima, line_dash="dash", line_color="#2ecc71", line_width=1.5
+        )
+        fig_opt.add_annotation(
+            x=capacidad_maxima, xref="x",
+            y=0.97, yref="paper",
+            text=f"Tu Estanque ≈ Óptimo<br>{capacidad_maxima:,.0f} L | {ef_actual:.1f}%",
+            showarrow=False,
+            font=dict(color="#2ecc71", size=10),
+            xanchor="left",
+            yanchor="top",
         )
 
     max_ef_vis = max(eficiencias) if eficiencias else 100
@@ -802,14 +843,41 @@ with tab1:
                 multiplicador_lluvia = max(0.0, 1.0 + variacion_pct) # Evita multiplicadores negativos
                 
                 alt_txt = f" | Altitud: **{formato_chileno(alt_estacion, 0)} m.s.n.m.** (desnivel: {formato_chileno(desnivel_abs, 0)} m)" \
-                               if desnivel_abs is not None else ""
+                               if not pd.isna(alt_estacion) else ""
                 st.info(f"📍 **Estación más cercana:** {estacion_cercana['Nombre']} "
                         f"*(Distancia efectiva: **{formato_chileno(distancia_minima, 1)} km**)*{alt_txt}")
                 
+                TABLA_GRADIENTE = (
+                    "| Terreno | Gradiente |\n"
+                    "|---|---|\n"
+                    "| Valle / costa plana | 0% |\n"
+                    "| Precordillera (300–600 m sobre estación) | +4% |\n"
+                    "| Precordillera alta (600–1.000 m) | +6% |\n"
+                    "| Cordillera (> 1.000 m) | +8% |\n"
+                    "| Sotavento / sombra de lluvia | −5% a −10% |"
+                )
                 if multiplicador_lluvia != 1.0:
                     signo = "+" if multiplicador_lluvia > 1 else ""
-                    st.warning(f" **Ajuste Orográfico Aplicado:** Debido a los {formato_chileno(desnivel_real, 0)}m de diferencia de altura, "
-                               f"las lluvias originales de esta estación se ajustaron en un **{signo}{(multiplicador_lluvia - 1)*100:.1f}%** para tu proyecto.")
+                    st.info(
+                        f"⚙️ **Gradiente orográfico activo:** las lluvias de la estación se ajustaron "
+                        f"**{signo}{(multiplicador_lluvia - 1)*100:.1f}%** por los "
+                        f"{formato_chileno(desnivel_real, 0)} m de desnivel. "
+                        f"Si quieres cambiar el ajuste, modifica el slider en la barra lateral.\n\n"
+                        f"{TABLA_GRADIENTE}"
+                    )
+                elif coef_orografico == 0.0 and desnivel_real > 300:
+                    if desnivel_real > 1000:
+                        gradiente_sugerido = 8
+                    elif desnivel_real > 600:
+                        gradiente_sugerido = 6
+                    else:
+                        gradiente_sugerido = 4
+                    st.info(
+                        f"💡 **Sugerencia:** Tu proyecto está **{formato_chileno(desnivel_real, 0)} m más alto** "
+                        f"que la estación — probablemente llueve más allí. "
+                        f"Considera usar **+{gradiente_sugerido}%** en el slider de Gradiente Orográfico y recalcular.\n\n"
+                        f"{TABLA_GRADIENTE}"
+                    )
 
                 # --- Mapa ---
                 fig_mapa = go.Figure()
@@ -859,7 +927,7 @@ with tab1:
                 )
 
                 anio_seco, anio_mediano, anio_lluvioso, totales_por_anio = encontrar_anios_extremos(
-                    df_sim_completa, codigo_estacion
+                    df_sim_completa
                 )
 
                 fig_cont = px.area(df_sim_completa, x="Fecha", y="Estanque Final (L)",
@@ -1000,7 +1068,7 @@ with tab1:
                     'est_nombre':             estacion_cercana['Nombre'],
                     'est_codigo':             codigo_estacion,
                     'est_altitud':            alt_estacion if not pd.isna(alt_estacion) else "—",
-                    'desnivel':               round(desnivel) if desnivel else "—",
+                    'desnivel':               round(desnivel) if not pd.isna(alt_estacion) else "—",
                     'distancia':              distancia_minima,
                     'anio_inicio':            anio_inicio,
                     'anio_fin':               anio_fin,

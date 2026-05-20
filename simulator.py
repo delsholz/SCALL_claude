@@ -41,7 +41,7 @@ def simular_continua(df_diario, codigo_estacion, anio_inicio, anio_fin,
     df['Lluvia_Corregida'] = df[codigo_estacion].fillna(0) * multiplicador_lluvia
     return df
 
-def encontrar_anios_extremos(df_sim_completa, codigo_estacion):
+def encontrar_anios_extremos(df_sim_completa):
     # Ahora sumamos la lluvia corregida por el gradiente orográfico
     totales_por_anio  = df_sim_completa.groupby('Anio')['Lluvia_Corregida'].sum()
     dias_por_anio     = df_sim_completa.groupby('Anio')['Lluvia_Corregida'].count()
