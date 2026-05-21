@@ -1,0 +1,672 @@
+\documentclass[12pt, a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish]{babel}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{parskip}
+% microtype desactivado por incompatibilidad con fuentes bitmap en MiKTeX
+\usepackage{listings}
+\usepackage{caption}
+
+\geometry{
+    top=2.5cm, bottom=2.5cm,
+    left=3cm,  right=2.5cm,
+    headheight=24.02pt
+}
+
+% Paleta Amulén
+\definecolor{azulosc}{HTML}{151434}
+\definecolor{azulbase}{HTML}{2e68b1}
+\definecolor{azulcielo}{HTML}{76c2f5}
+\definecolor{arena}{HTML}{f8f3ea}
+\definecolor{verdesc}{HTML}{e1ffbc}
+\definecolor{grisclaro}{HTML}{f4f4f4}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=azulbase,
+    urlcolor=azulbase,
+    citecolor=azulbase,
+    pdftitle={Memoria Técnica App-SCALL v2.0},
+    pdfauthor={Diego Elsholz}
+}
+
+% Encabezado y pie
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{azulbase} Memoria Técnica App-SCALL}
+\fancyhead[R]{\small\color{azulbase} Versión 2.0 --- Mayo 2026}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{azulbase}\leaders\hrule height \headrulewidth\hfill}}
+
+% Títulos de sección con línea azul
+\titleformat{\section}
+  {\large\bfseries\color{azulosc}}
+  {\thesection}{1em}{}[\vspace{-0.3em}\textcolor{azulcielo}{\rule{\linewidth}{1.2pt}}]
+
+\titleformat{\subsection}
+  {\normalsize\bfseries\color{azulbase}}
+  {\thesubsection}{1em}{}
+
+% Código inline
+\lstset{
+    basicstyle=\small\ttfamily,
+    backgroundcolor=\color{grisclaro},
+    frame=single,
+    rulecolor=\color{azulcielo},
+    breaklines=true,
+    language=Python,
+    keywordstyle=\color{azulbase}\bfseries,
+    commentstyle=\color{gray},
+    stringstyle=\color{azulbase},
+}
+
+\begin{document}
+
+% ================================================================
+% PORTADA
+% ================================================================
+\begin{titlepage}
+    \centering
+    \vspace*{2cm}
+
+    {\LARGE\bfseries Memoria Técnica: Ingeniería de Datos y\\[0.4em]
+    Modelación Hidrológica en App-SCALL\par}
+
+    \vspace{0.8cm}
+    {\large Sistema Estocástico de Dimensionamiento de Captación de\\Aguas Lluvias\par}
+
+    \vspace{3cm}
+    \textcolor{azulbase}{\rule{8cm}{1pt}}
+    \vspace{1.5cm}
+
+    {\large\textbf{Autor: Diego Elsholz}\par}
+    \vspace{0.4cm}
+    {\normalsize Proyecto de Ingeniería Hidrológica\\
+    Fundación Amulén --- La Fundación del Agua\par}
+
+    \vfill
+
+    {\normalsize Versión 2.0\\
+    21 de mayo de 2026\par}
+\end{titlepage}
+
+% ================================================================
+% ÍNDICE
+% ================================================================
+\tableofcontents
+\newpage
+
+% ================================================================
+\section{Resumen Ejecutivo}
+% ================================================================
+
+App-SCALL es una plataforma de software desarrollada en Python (Streamlit) para la simulación y dimensionamiento de sistemas de captación de aguas lluvias (SCALL). A diferencia de calculadoras simplificadas basadas en promedios, App-SCALL utiliza \textbf{registros climáticos históricos diarios reales} (2000--2020) y un algoritmo de balance de masas diario para entregar resultados con un nivel de confianza estadística superior al 95\,\%.
+
+La aplicación está disponible en línea en:
+\begin{center}
+\url{https://scallclaude-a6ziabnwkurju5e24brqke.streamlit.app}
+\end{center}
+
+Los principales módulos del sistema son:
+
+\begin{itemize}
+    \item \textbf{Motor de simulación hidrológica:} balance diario bajo el modelo YAS (\textit{Yield After Spillage}) con corrección orográfica de la precipitación.
+    \item \textbf{Selección estocástica de escenarios:} extracción de años reales seco (P5), normal (mediana $+$ SSE) y lluvioso (P95) desde 20 años de registro.
+    \item \textbf{Optimización automática:} algoritmo Kneedle para identificar el ``Sweet Spot'' de capacidad del estanque.
+    \item \textbf{Mapa de factibilidad nacional:} triangulación de Delaunay sobre $\sim$400 estaciones CR$^2$ con precipitación media anual interpolada.
+    \item \textbf{Generación de informes:} exportación a PDF (identidad visual Amulén) y Excel con balance diario completo.
+\end{itemize}
+
+% ================================================================
+\section{Fuente de Información: La Base de Datos (CR)\textsuperscript{2}}
+% ================================================================
+
+El pilar de confiabilidad de la aplicación es el uso de la base de datos del Centro de Ciencia del Clima y la Resiliencia (CR)$^2$ de la Universidad de Chile.
+
+\subsection{Origen de las mediciones}
+
+Los registros provienen de una extensa red física de estaciones meteorológicas operadas históricamente por la Dirección Meteorológica de Chile (DMC) y la Dirección General de Aguas (DGA), cuyos datos crudos fueron consolidados y estandarizados por el (CR)$^2$ en el producto \texttt{cr2\_prDaily\_2020}.
+
+\subsection{Alcance espacial y temporal}
+
+\begin{itemize}
+    \item \textbf{Estaciones:} más de 1.000 estaciones a lo largo de Chile continental e insular.
+    \item \textbf{Período analizado:} \textbf{2000--2020} (20 años). Esta decisión metodológica responde a dos criterios:
+    \begin{enumerate}
+        \item La calidad y densidad de datos es sustancialmente mayor desde el año 2000.
+        \item El período incluye la Mega-Sequía en Chile Central (2010--2019), por lo que el modelo es más conservador y representativo del clima actual y proyectado.
+    \end{enumerate}
+    \item \textbf{Resolución temporal:} precipitación diaria (mm/día por estación).
+    \item \textbf{Corte en 2020:} las restricciones de movilidad impuestas por la pandemia COVID-19 generaron interrupciones masivas en la lectura manual de pluviómetros a nivel nacional a partir de 2020, afectando la calidad de los datos posteriores.
+\end{itemize}
+
+% ================================================================
+\section{Ingeniería y Tratamiento de Datos}
+% ================================================================
+
+Debido a que los archivos climáticos crudos presentan múltiples inconsistencias, App-SCALL implementa una robusta capa de limpieza y validación (\textit{data cleaning}):
+
+\subsection{Carga por chunks}
+
+Para manejar el archivo principal (\texttt{cr2\_prDaily\_2020.txt.gz}, $\sim$5,3 MB comprimido) sin colapsar la memoria RAM disponible en Streamlit Cloud (1 GB), la app lo procesa en bloques de 10.000 filas mediante \texttt{pd.read\_csv(..., chunksize=10000)}, filtrando dinámicamente solo el período 2000--2020.
+
+\subsection{Saneamiento de coordenadas}
+
+El código implementa la función \texttt{arreglar\_coordenada()} que detecta y corrige errores de digitación en las latitudes y longitudes del archivo original: puntos decimales omitidos, formatos de cadena incorrectos y valores fuera de rango geográfico para Chile ($-17.5° \leq \phi \leq -56°$, $-76° \leq \lambda \leq -66°$).
+
+\subsection{Gestión de datos faltantes}
+
+Los valores nulos están etiquetados como \texttt{-9999} en climatología. El sistema los identifica y los trata como \texttt{NaN} (valor ausente en Pandas). Adicionalmente, los registros negativos se ``bloquean'' mediante un \textit{clip} a cero (\texttt{clip(lower=0)}) para evitar errores matemáticos en el acumulado del estanque.
+
+\subsection{Control de calidad por estación}
+
+El sistema permite al usuario definir un umbral de calidad (por defecto 80\,\%). La aplicación analiza mes a mes cada estación meteorológica y descarta automáticamente aquellas que no alcancen el porcentaje mínimo de meses con datos válidos dentro del período 2000--2020, evitando simulaciones basadas en información incompleta.
+
+Formalmente, una estación $e$ es aceptada si:
+\begin{equation}
+    \frac{\text{meses válidos}_e}{\text{meses totales}} \geq \frac{\text{umbral}}{100}
+\end{equation}
+
+\subsection{Caché de datos}
+
+Todas las funciones de carga de datos están decoradas con \texttt{@st.cache\_data(ttl=3600)}, lo que almacena los resultados en memoria durante una hora. Esto evita releer y reprocesar el archivo CR$^2$ en cada interacción del usuario, reduciendo el tiempo de respuesta de $\sim$8 segundos a $<$0,1 segundos en consultas subsecuentes.
+
+% ================================================================
+\section{Inteligencia Geoespacial}
+% ================================================================
+
+\subsection{Selección de estación meteorológica}
+
+Para determinar la pluviometría del lugar del proyecto, App-SCALL utiliza la \textbf{distancia de Haversine} implementada de forma vectorizada en NumPy. Esto permite calcular, en milisegundos, la distancia entre las coordenadas indicadas por el usuario y todas las estaciones de Chile simultáneamente.
+
+La fórmula de Haversine para la distancia entre dos puntos en la esfera terrestre es:
+
+\begin{equation}
+    d = 2R \cdot \arcsin\!\left(\sqrt{\sin^2\!\left(\frac{\Delta\phi}{2}\right) + \cos\phi_1\cos\phi_2\sin^2\!\left(\frac{\Delta\lambda}{2}\right)}\right)
+\end{equation}
+
+donde $R = 6.371$ km es el radio terrestre medio, $\phi$ la latitud y $\lambda$ la longitud en radianes.
+
+\subsection{Corrección altitudinal de la distancia}
+
+La app no selecciona simplemente la estación más cercana en distancia horizontal. Aplica una \textbf{corrección altitudinal} que penaliza las estaciones con gran diferencia de altura respecto al proyecto, ya que la lluvia varía significativamente con la altitud en terrenos montañosos:
+
+\begin{equation}
+    d_{\text{efectiva}} = d_{\text{Haversine}} + k \cdot \frac{|\Delta h|}{1000}
+\end{equation}
+
+donde $\Delta h$ es la diferencia de altitud en metros entre la estación y el proyecto, y $k$ es el coeficiente de penalización altitudinal (por defecto $k = 5$ km por cada 100 m de desnivel).
+
+\subsection{Ingreso de ubicación}
+
+El usuario puede ingresar las coordenadas del proyecto de dos formas:
+
+\begin{enumerate}
+    \item \textbf{Coordenadas manuales:} ingreso directo de latitud y longitud decimal.
+    \item \textbf{Link de Google Maps:} la app extrae automáticamente las coordenadas del URL mediante expresiones regulares, soportando los formatos \texttt{@lat,lon}, \texttt{?q=lat,lon} y \texttt{ll=lat,lon}.
+\end{enumerate}
+
+La altitud se puede obtener automáticamente consultando la API pública OpenTopoData (SRTM 90m), con respaldo en Open-Meteo Elevation API.
+
+% ================================================================
+\section{Corrección Orográfica de la Precipitación}
+% ================================================================
+
+Una limitación fundamental de cualquier sistema basado en estaciones es que la precipitación medida en la estación no necesariamente representa la precipitación en el sitio del proyecto, especialmente cuando hay diferencias de altitud significativas.
+
+App-SCALL implementa un \textbf{gradiente orográfico} configurable por el usuario. El parámetro define el porcentaje de variación de lluvia por cada 100 m de desnivel entre la estación y el proyecto:
+
+\begin{equation}
+    P_{\text{proyecto}} = P_{\text{estación}} \times \left(1 + \frac{\gamma}{100} \cdot \frac{\Delta h}{100}\right)
+\end{equation}
+
+donde:
+\begin{itemize}
+    \item $P_{\text{estación}}$ = precipitación diaria registrada en la estación (mm/día)
+    \item $\gamma$ = gradiente orográfico (\%/100 m de desnivel), configurable entre $-15\%$ y $+15\%$
+    \item $\Delta h = h_{\text{proyecto}} - h_{\text{estación}}$ (m), positivo si el proyecto está más alto
+\end{itemize}
+
+El multiplicador final aplicado a toda la serie diaria es:
+\begin{equation}
+    M = 1 + \frac{\gamma \cdot \Delta h}{10000}
+\end{equation}
+
+\textbf{Referencia rápida de uso:}
+
+\begin{center}
+\begin{tabular}{lc}
+\toprule
+\textbf{Situación topográfica} & \textbf{Gradiente sugerido} \\
+\midrule
+Valle o costa plana & $0\%$ \\
+Precordillera (proyecto más alto) & $+3\%$ a $+7\%$ \\
+Cordillera alta (proyecto más alto) & $+5\%$ a $+12\%$ \\
+Sotavento / sombra de lluvia & $-5\%$ a $-10\%$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textit{Nota: los valores anteriores son orientativos. No existe actualmente una fuente oficial (CR$^2$ o DGA) que calibre gradientes orográficos a escala local para Chile. Se recomienda usar el valor por defecto ($0\%$) salvo que se disponga de datos locales que justifiquen el ajuste.}
+
+% ================================================================
+\section{Algoritmo Hidrológico: Modelo YAS (\textit{Yield After Spillage})}
+% ================================================================
+
+La modelación estocástica del estanque se rige por la lógica matemática \textbf{YAS} (\textit{Yield After Spillage}), el algoritmo de balance de masas diario recomendado por la literatura especializada \cite{fewkes1999} por ser el método más conservador y preciso para evitar la sobreestimación del recurso hídrico disponible.
+
+Bajo el algoritmo YAS, durante el intervalo temporal de un día, el volumen de lluvia captado ingresa al estanque y el posible rebalse ocurre \textbf{antes} de que el usuario extraiga la demanda de agua. El estado del estanque con capacidad máxima $C$ en el día $t$ se define mediante el siguiente sistema secuencial de ecuaciones:
+
+\subsection{1. Captación bruta ($Q_t$)}
+
+Se calcula el volumen recolectado en el día $t$ a partir de la precipitación corregida:
+
+\begin{equation}
+    Q_t = P_t \times M \times A \times C_e
+\end{equation}
+
+donde $P_t$ es la precipitación diaria de la estación (mm $\equiv$ L/m$^2$), $M$ es el multiplicador orográfico (ver Sección 5), $A$ es el área de la techumbre (m$^2$) y $C_e$ es el coeficiente de eficiencia de captación (adimensional, $0{,}5 \leq C_e \leq 1{,}0$).
+
+\subsection{2. Volumen previo al rebalse ($V_{\text{temp}}$)}
+
+Se calcula el almacenamiento temporal sumando el agua del día anterior más la captación actual:
+
+\begin{equation}
+    V_{\text{temp}} = V_{t-1} + Q_t
+\end{equation}
+
+\subsection{3. Cálculo de rebalse ($S_t$)}
+
+Si el volumen temporal excede la capacidad nominal del estanque ($C$), el exceso se pierde:
+
+\begin{equation}
+    S_t = \max(0,\; V_{\text{temp}} - C)
+\end{equation}
+
+\subsection{4. Abastecimiento efectivo y déficit ($Y_t$)}
+
+La extracción para cubrir la demanda diaria ($D_t$) se contabiliza solo sobre el agua que logró retenerse en el estanque tras el rebalse:
+
+\begin{equation}
+    Y_t = \min(D_t,\; V_{\text{temp}} - S_t)
+\end{equation}
+
+Si la demanda excede el volumen disponible, se genera un déficit. \textbf{Este déficit diario no es acumulativo}: el modelo asume un abastecimiento complementario externo (red pública, camión aljibe) que suple exactamente el volumen faltante de ese día, sin arrastrar deuda hídrica al día siguiente.
+
+\subsection{5. Almacenamiento final ($V_t$)}
+
+El volumen real que se transfiere al día siguiente es:
+
+\begin{equation}
+    V_t = V_{\text{temp}} - S_t - Y_t = \max\!\left(0,\; \min(V_{\text{temp}}, C) - D_t\right)
+\end{equation}
+
+\subsection{Demanda diaria}
+
+La demanda diaria $D_t$ se calcula según el tipo de uso y los meses de operación definidos por el usuario:
+
+\begin{equation}
+    D_t =
+    \begin{cases}
+        N \times d & \text{si el mes } t \text{ está en operación y el día es hábil (o incluye fines de semana)} \\
+        0 & \text{en caso contrario}
+    \end{cases}
+\end{equation}
+
+donde $N$ es el número de personas y $d$ es la dotación (L/persona/día).
+
+% ================================================================
+\section{Análisis de Escenarios Críticos y Selección Estocástica}
+% ================================================================
+
+App-SCALL no diseña en base a promedios irreales que diluyen el riesgo. El código analiza la serie histórica real (2000--2020) y extrae \textbf{tres escenarios físicos} para someter el sistema a estrés:
+
+\subsection{Año Seco (Percentil P5)}
+
+Representa el peor escenario pluviométrico del período. El año seco real es aquel cuya precipitación anual corregida más se aproxima al percentil 5 de la distribución histórica:
+
+\begin{equation}
+    \text{Año seco} = \underset{a \in \mathcal{A}}{\arg\min}\left|PP_a - P_{05}\right|
+\end{equation}
+
+donde $\mathcal{A}$ es el conjunto de años con al menos 300 días de registro válido.
+
+\subsection{Año Lluvioso (Percentil P95)}
+
+Análogamente, el año lluvioso es el que más se aproxima al percentil 95:
+
+\begin{equation}
+    \text{Año lluvioso} = \underset{a \in \mathcal{A}}{\arg\min}\left|PP_a - P_{95}\right|
+\end{equation}
+
+\subsection{Año Normal: Algoritmo de Doble Filtro Estadístico}
+
+Para encontrar el año más representativo del comportamiento climático típico, App-SCALL implementa un algoritmo en dos fases que evita seleccionar un año con volumen normal pero distribución temporal atípica (ej. toda la lluvia en un solo mes):
+
+\textbf{Fase 1 --- Filtro Volumétrico:} se preseleccionan los 3 años cuya precipitación anual total $PP_a$ es más cercana a la mediana $\tilde{PP}$ del período:
+
+\begin{equation}
+    \mathcal{C} = \text{3 años con menor } |PP_a - \tilde{PP}|,\quad a \in \mathcal{A}
+\end{equation}
+
+\textbf{Fase 2 --- Filtro de Distribución Temporal:} para cada candidato $c \in \mathcal{C}$, se calcula la Suma de Errores al Cuadrado (SSE) entre su distribución mensual real y el promedio mensual histórico del período completo:
+
+\begin{equation}
+    SSE_c = \sum_{i=1}^{12}\left(Mes_{c,i} - \overline{Mes}_i\right)^2
+\end{equation}
+
+El sistema selecciona como Año Normal aquel que minimiza el SSE:
+
+\begin{equation}
+    \text{Año normal} = \underset{c \in \mathcal{C}}{\arg\min}\; SSE_c
+\end{equation}
+
+El uso del SSE en lugar del RMSE tradicional responde a un criterio de eficiencia computacional: garantiza matemáticamente la selección del mismo año óptimo en una fracción del tiempo.
+
+% ================================================================
+\section{Curva de Optimización: El ``Sweet Spot'' del Diseño}
+% ================================================================
+
+Una de las funciones más avanzadas del software es la \textbf{Optimización Automática de Capacidad}. La app genera un vector de capacidades de prueba (desde 1.000 L hasta $\max(30.000\,\text{L},\; 2 \times C_{\text{usuario}})$, en pasos de 1.000 L) y ejecuta el algoritmo YAS vectorizado sobre el año simulado para cada capacidad.
+
+\subsection{Vectorización del bucle YAS}
+
+A diferencia de la simulación principal (que opera día a día con Python puro para preservar el estado del estanque), la curva de optimización simula \textit{todas las capacidades en paralelo} usando operaciones matriciales de NumPy:
+
+\begin{lstlisting}[caption={Núcleo vectorizado de la curva de optimización}]
+caps  = np.array(capacidades_prueba, dtype=np.float64)  # shape: (N,)
+nivel = np.zeros(len(caps))
+
+for captado_i, demanda_i in zip(cap_arr, dem_arr):
+    disp    = np.minimum(nivel + captado_i, caps)
+    usada   = np.minimum(disp, demanda_i)
+    nivel   = np.maximum(0.0, disp - demanda_i)
+    sum_tot += usada
+\end{lstlisting}
+
+\subsection{Identificación del punto óptimo}
+
+Una vez calculada la curva de eficiencia $\eta(C)$ (porcentaje de cobertura vs.\ capacidad), el punto óptimo se determina mediante dos criterios en cascada:
+
+\begin{enumerate}
+    \item \textbf{Criterio del 95\%:} si la curva alcanza el 95\,\% de cobertura, el óptimo es el primer estanque que lo logra:
+    \begin{equation}
+        C^* = \min\{C \in \mathcal{C} : \eta(C) \geq 95\%\}
+    \end{equation}
+
+    \item \textbf{Algoritmo Kneedle} (para curvas que no alcanzan el 95\%): se normalizan ambos ejes al intervalo $[0,1]$ y se busca el punto donde la curva cóncava se desvía más por encima de la diagonal --- la zona de máxima ganancia marginal relativa antes del aplanamiento:
+    \begin{equation}
+        C^* = \underset{C \in \mathcal{C}}{\arg\max}\left(\hat{\eta}(C) - \hat{C}\right)
+    \end{equation}
+    donde $\hat{\cdot}$ denota normalización al rango $[0,1]$.
+\end{enumerate}
+
+% ================================================================
+\section{Mapa de Factibilidad Nacional}
+% ================================================================
+
+La pestaña ``Mapa de Factibilidad Nacional'' provee contexto espacial para cualquier proyecto en Chile. A diferencia de enfoques que muestran únicamente puntos discretos en las estaciones, App-SCALL genera una \textbf{cobertura continua} del territorio mediante triangulación de Delaunay.
+
+\subsection{Precipitación media anual por estación}
+
+Previo a la triangulación, se calcula la precipitación media anual de cada estación CR$^2$ usando solo años con al menos 300 días de registro válido:
+
+\begin{equation}
+    \overline{PP}_e = \frac{1}{|\mathcal{Y}_e|}\sum_{a \in \mathcal{Y}_e} PP_{e,a}
+\end{equation}
+
+donde $\mathcal{Y}_e$ es el conjunto de años completos de la estación $e$.
+
+\subsection{Triangulación de Delaunay}
+
+Sobre las coordenadas $(lon_e, lat_e)$ de las $\sim$400 estaciones con datos válidos se construye una triangulación de Delaunay usando \texttt{scipy.spatial.Delaunay}. Esta triangulación tiene la propiedad de maximizar el ángulo mínimo de cada triángulo, produciendo una malla espacialmente regular y visualmente coherente.
+
+Para evitar triángulos que crucen zonas sin datos (océano, desierto, frontera), se aplica un filtro de arista máxima:
+
+\begin{equation}
+    \text{Triángulo válido} \iff \max\!\left(d_{12},\, d_{23},\, d_{13}\right) \leq 2{,}2°
+\end{equation}
+
+donde $d_{ij}$ es la distancia euclidiana en grados entre los vértices $i$ y $j$ del triángulo. El umbral de $2{,}2°$ equivale aproximadamente a $\sim$245 km, suficiente para cubrir Chile central con buena densidad de estaciones y excluir triángulos espurios sobre el océano.
+
+\subsection{Valor de cada triángulo}
+
+A cada triángulo se le asigna el promedio de la precipitación media anual de sus tres vértices:
+
+\begin{equation}
+    PP_{\triangle} = \frac{\overline{PP}_{v_1} + \overline{PP}_{v_2} + \overline{PP}_{v_3}}{3}
+\end{equation}
+
+\subsection{Escala de colores}
+
+El mapa utiliza una escala cromática basada en la paleta de Fundación Amulén:
+
+\begin{center}
+\begin{tabular}{llll}
+\toprule
+\textbf{Color} & \textbf{PP media anual} & \textbf{Zona típica} \\
+\midrule
+Blanco casi puro & $<$ 100 mm & Norte Grande (Tarapacá, Antofagasta) \\
+Azul muy claro & 100--300 mm & Norte Chico (Atacama, Coquimbo) \\
+Celeste (\texttt{\#76c2f5}) & 300--800 mm & Zona Central (Valparaíso, Maule) \\
+Azul base (\texttt{\#2e68b1}) & 800--1.500 mm & La Araucanía, Los Ríos \\
+Azul oscuro (\texttt{\#151434}) & $>$ 1.500 mm & Los Lagos, Aysén, Magallanes \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Mapa de cobertura estimada}
+
+Un segundo sub-mapa aplica los parámetros de diseño del usuario (superficie de techo, eficiencia y demanda anual) para estimar la cobertura teórica en cada triángulo:
+
+\begin{equation}
+    \eta_{\triangle} = \min\!\left(100\%,\; \frac{PP_{\triangle} \times A \times C_e}{D_{\text{anual}}} \times 100\right)
+\end{equation}
+
+Esta estimación es simplificada (no incluye el efecto del estanque ni la estacionalidad de la demanda) y se presenta como referencia de orden de magnitud.
+
+% ================================================================
+\section{Interfaz de Usuario e Interoperabilidad}
+% ================================================================
+
+La aplicación cuenta con un panel de control interactivo (sidebar) donde el usuario define todos los parámetros de entrada, organizados en secciones:
+
+\begin{center}
+\begin{tabular}{lp{9cm}}
+\toprule
+\textbf{Sección} & \textbf{Parámetros} \\
+\midrule
+1. Datos del Proyecto & Nombre, superficie de techo (m$^2$), capacidad del estanque (L), eficiencia de captación (\%) \\
+Consumo & Número de personas, litros/persona/día, tipo de uso (escuela/residencia), meses de operación, inclusión de fines de semana \\
+2. Calidad de Datos & Umbral mínimo de registros válidos (\%) \\
+3. Coordenadas & Latitud/longitud manual \textit{o} link de Google Maps; altitud manual o automática (API) \\
+Gradiente Orográfico & Porcentaje de variación de lluvia por 100 m de desnivel \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Pestañas de resultados}
+
+Los resultados se organizan en tres pestañas principales:
+
+\begin{enumerate}
+    \item \textbf{Simulación Histórica y Escenarios:} serie continua 2000--2020 con Plotly interactivo, curvas de nivel del estanque para los tres escenarios, curvas de optimización de capacidad, y tablas diarias exportables a Excel.
+    \item \textbf{Resumen Mensual Histórico:} climograma de precipitación mensual promedio de la estación seleccionada.
+    \item \textbf{Mapa de Factibilidad Nacional:} mapa interactivo con triangulación de Delaunay (sub-pestañas: precipitación media y cobertura estimada).
+\end{enumerate}
+
+\subsection{Exportación de datos}
+
+\begin{itemize}
+    \item \textbf{Excel (.xlsx):} balance diario completo (fecha, lluvia, captado, demanda, estanque, rebalse, déficit) para cada escenario climático. Generado con \texttt{xlsxwriter}.
+    \item \textbf{PDF:} informe de viabilidad con identidad visual Amulén (ver Sección 11).
+\end{itemize}
+
+% ================================================================
+\section{Informe PDF de Viabilidad}
+% ================================================================
+
+App-SCALL genera un informe PDF profesional utilizando la librería \texttt{fpdf2}. El documento sigue la identidad visual de Fundación Amulén e incluye:
+
+\subsection{Identidad visual}
+
+\begin{itemize}
+    \item \textbf{Tipografía:} Poppins (Regular, Bold, Italic, BoldItalic) --- tipografía corporativa de Amulén, incluida como archivo TTF en el repositorio y registrada dinámicamente en \texttt{fpdf2}.
+    \item \textbf{Paleta de colores:}
+    \begin{itemize}
+        \item Azul Oscuro \texttt{\#151434} --- encabezado, pie de página, texto principal
+        \item Azul Base \texttt{\#2e68b1} --- barras de sección, bordes
+        \item Azul Cielo \texttt{\#76c2f5} --- franjas decorativas, acentos
+        \item Arena \texttt{\#f8f3ea} --- fondo de filas alternas, texto sobre oscuro
+    \end{itemize}
+    \item \textbf{Logo:} logo blanco de Amulén embebido en encabezado (upscalado a 1.200 px con Lanczos para evitar pixelación) y en pie de página como marca de agua (600 px).
+\end{itemize}
+
+\subsection{Estructura del informe}
+
+\begin{enumerate}
+    \item \textbf{Encabezado:} fondo azul oscuro con logo, título ``SIMULADOR SCALL'', subtítulo y fecha de generación.
+    \item \textbf{Parámetros del sistema:} tabla de 4 columnas con todos los inputs del usuario.
+    \item \textbf{Estación meteorológica:} nombre, código, altitud, distancia efectiva y calidad de datos.
+    \item \textbf{Resultados por escenario:} tabla comparativa (año seco / normal / lluvioso) con lluvia total, volumen captado, demanda, cobertura (\%) y días sin agua.
+    \item \textbf{Gráfico de nivel del estanque:} serie diaria del año normal generada con Matplotlib, embebida como PNG.
+    \item \textbf{Curva de optimización:} capacidad óptima recomendada y eficiencia alcanzable.
+    \item \textbf{Conclusiones y veredicto:} texto automático con clasificación de viabilidad:
+    \begin{itemize}
+        \item \textbf{VIABLE} si cobertura en año normal $\geq 60\%$
+        \item \textbf{PARCIALMENTE VIABLE} si cobertura $\geq 30\%$
+        \item \textbf{NO RECOMENDADO} si cobertura $< 30\%$
+    \end{itemize}
+    \item \textbf{Pie de página automático:} aparece en todas las páginas con texto institucional y logo Amulén.
+\end{enumerate}
+
+% ================================================================
+\section{Análisis de Seguridad y Autonomía Hídrica}
+% ================================================================
+
+El software implementa una capa de interpretación de resultados basada en umbrales de seguridad operativa, clasificando la disponibilidad del recurso en tres zonas:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Zona} & \textbf{Nivel del estanque} & \textbf{Significado operativo} \\
+\midrule
+Zona de Alerta & $< 10\%$ & Riesgo de ``reserva muerta'' y succión de sedimentos \\
+Zona Operativa & $10\% - 80\%$ & Rango de funcionamiento normal del sistema \\
+Zona de Seguridad & $> 80\%$ & Resiliencia y autonomía total frente a períodos sin lluvia \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Adicionalmente, para cada escenario climático el sistema reporta:
+
+\begin{itemize}
+    \item \textbf{Días sin agua:} número de días en que el estanque llega a cero y el consumo no puede satisfacerse.
+    \item \textbf{Porcentaje de cobertura:} fracción del consumo total anual que es cubierta por el sistema de captación.
+    \item \textbf{Volumen de rebalse total:} agua captada que no puede almacenarse por límite de capacidad del estanque (útil para dimensionar el sistema de evacuación).
+\end{itemize}
+
+% ================================================================
+\section{Arquitectura del Software}
+% ================================================================
+
+\begin{center}
+\begin{tabular}{lp{10cm}}
+\toprule
+\textbf{Archivo} & \textbf{Rol} \\
+\midrule
+\texttt{app\_scall.py} & Aplicación principal Streamlit: UI, visualizaciones Plotly, generación de PDF e informe Excel \\
+\texttt{simulator.py} & Motor de simulación: balance diario YAS, selección de años extremos (P5/P95/SSE), curva de optimización Kneedle \\
+\texttt{data\_loader.py} & Carga y filtrado de datos CR$^2$, control de calidad por estación, caché Streamlit \\
+\texttt{utils.py} & Helpers: formato chileno de números, distancia Haversine vectorizada, corrección de coordenadas \\
+\texttt{requirements.txt} & Dependencias del proyecto \\
+\texttt{fonts/} & Tipografía Poppins (Regular, Bold, Italic, BoldItalic) en formato TTF \\
+\texttt{data/cr2\_prDaily\_2020.txt.gz} & Dataset principal: precipitación diaria por estación (5,3 MB comprimido) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Stack tecnológico}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Librería} & \textbf{Uso principal} \\
+\midrule
+\texttt{streamlit} & Framework de aplicación web interactiva \\
+\texttt{pandas} & Manipulación de datos tabulares \\
+\texttt{numpy} & Cálculo vectorizado (simulación, Haversine, Kneedle) \\
+\texttt{plotly} & Visualizaciones interactivas (mapas, series de tiempo, curvas) \\
+\texttt{scipy} & Triangulación de Delaunay (\texttt{scipy.spatial.Delaunay}) \\
+\texttt{matplotlib} & Gráfico de nivel del estanque para el PDF \\
+\texttt{fpdf2} & Generación de informes PDF \\
+\texttt{Pillow} & Upscaling del logo (Lanczos) para alta resolución en PDF \\
+\texttt{xlsxwriter} & Exportación de balances diarios a Excel \\
+\texttt{requests} & Consultas a APIs externas (altitud, coordenadas) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ================================================================
+\section{Despliegue}
+% ================================================================
+
+La aplicación está desplegada en \textbf{Streamlit Community Cloud} (plan gratuito):
+
+\begin{itemize}
+    \item \textbf{URL:} \url{https://scallclaude-a6ziabnwkurju5e24brqke.streamlit.app}
+    \item \textbf{Repositorio:} \texttt{delsholz/SCALL\_claude} en GitHub (rama \texttt{main})
+    \item \textbf{Actualización:} el despliegue se actualiza automáticamente con cada \texttt{git push} a la rama principal.
+    \item \textbf{Disponibilidad:} accesible desde cualquier dispositivo (PC, tablet, móvil) mediante navegador web.
+    \item \textbf{Limitación:} la app hiberna tras un período de inactividad y tarda $\sim$30 segundos en despertar la primera vez. La RAM disponible es 1 GB.
+\end{itemize}
+
+% ================================================================
+\section{Conclusión}
+% ================================================================
+
+App-SCALL se posiciona en la frontera entre la ciencia de datos climáticos y la ingeniería hidrológica aplicada, superando las limitaciones de las calculadoras estáticas tradicionales. Al abandonar los promedios mensuales genéricos en favor de simulaciones empíricas diarias basadas en 20 años de registros reales --- incluyendo la Mega-Sequía histórica de Chile Central --- la plataforma somete los diseños a pruebas de estrés reales, entregando un nivel de certidumbre sin precedentes para el dimensionamiento a escala local.
+
+La integración de una arquitectura de software robusta que abarca desde el saneamiento automatizado de la base de datos CR$^2$, pasando por el modelamiento físico YAS con corrección orográfica, la selección estocástica de escenarios mediante el algoritmo SSE, la optimización de capacidad con el algoritmo Kneedle, y la visualización territorial continua mediante triangulación de Delaunay, asegura que la capacidad óptima sugerida responda fielmente a la física del entorno.
+
+Al traducir millones de registros meteorológicos en indicadores operativos claros de Seguridad y Autonomía Hídrica, App-SCALL democratiza el acceso a la ingeniería de precisión, permitiendo a proyectistas, arquitectos y usuarios finales diseñar sistemas de captación de aguas lluvias que no solo son técnicamente sólidos, sino también económicamente eficientes y climáticamente resilientes frente al cambiante escenario hídrico de Chile.
+
+% ================================================================
+\section*{Referencias Bibliográficas}
+\addcontentsline{toc}{section}{Referencias Bibliográficas}
+% ================================================================
+
+\begin{thebibliography}{9}
+
+\bibitem{fewkes1999}
+Fewkes, A. (1999). \textit{The use of predictive models for the sizing of rainwater harvesting systems for use in buildings}. Building and Environment, 34(5), 545--552.
+
+\bibitem{jenkins1978}
+Jenkins, D., Pearson, F., Moore, E., Sun, J.\,K., \& Valentine, R. (1978). \textit{Feasibility of rainwater collection systems in California}. California Water Resources Center, University of California.
+
+\bibitem{cr2_2020}
+Centro de Ciencia del Clima y la Resiliencia (CR)$^2$. (2020). \textit{Base de datos consolidada de precipitación diaria (cr2\_prDaily\_2020)}. Universidad de Chile. Disponible en: \url{http://www.cr2.cl/datos-de-precipitacion/}
+
+\bibitem{kneedle}
+Satopaa, V., Albrecht, J., Irwin, D., \& Raghavan, B. (2011). \textit{Finding a ``Kneedle'' in a Haystack: Detecting Knee Points in System Behavior}. 31st International Conference on Distributed Computing Systems Workshops (ICDCSW).
+
+\bibitem{delaunay}
+Delaunay, B. (1934). \textit{Sur la sphère vide}. Bulletin de l'Académie des Sciences de l'URSS, Classe des Sciences Mathématiques et Naturelles, 6, 793--800.
+
+\end{thebibliography}
+
+\end{document}

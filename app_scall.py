@@ -174,7 +174,7 @@ def generar_informe_pdf(d):
 
     # Logo Assets (blanco sobre oscuro) — upscaleado para evitar pixelación
     import os
-    _LOGO_PATH = os.path.join("\U0001f5bc️ Assets", "Logo_Amulen..png")
+    _LOGO_PATH = os.path.join("assets", "Logo_Amulen_blanco.png")
     LOGO_HEADER = _logo_hires(_LOGO_PATH, target_w_px=1200)
     LOGO_FOOTER = _logo_hires(_LOGO_PATH, target_w_px=600)
 
@@ -516,7 +516,7 @@ st.sidebar.markdown(
         <img src="data:image/png;base64,{logo_b64}" style="width:100%;">
     </div>
     """.replace("{logo_b64}", __import__('base64').b64encode(
-        open("\U0001f5bc️ Assets/Logo_Amulen..png", "rb").read()
+        open("assets/Logo_Amulen_blanco.png", "rb").read()
     ).decode()),
     unsafe_allow_html=True,
 )
