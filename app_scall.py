@@ -29,11 +29,12 @@ def _generar_grafico_estanque_pdf(df_normal, capacidad_maxima):
     y_vals = df_normal['Agua Acumulada Teórica (L)'].values
 
     fig, ax = plt.subplots(figsize=(9.5, 2.8))
-    ax.fill_between(eje_x, y_vals, alpha=0.25, color='#3498db')
-    ax.plot(eje_x, y_vals, color='#3498db', linewidth=1.5, label='Nivel del estanque')
-    ax.axhline(y=capacidad_maxima, color='#e74c3c', linestyle='--', linewidth=1.5,
+    # Colores Amulén: Azul Base #2e68b1, Azul Cielo #76c2f5
+    ax.fill_between(eje_x, y_vals, alpha=0.18, color='#2e68b1')
+    ax.plot(eje_x, y_vals, color='#2e68b1', linewidth=2.0, label='Nivel del estanque')
+    ax.axhline(y=capacidad_maxima, color='#151434', linestyle='--', linewidth=1.5,
                label=f'Capacidad: {capacidad_maxima:,.0f} L')
-    ax.axhline(y=0, color='#e67e22', linestyle=':', linewidth=1.2, label='Sin agua')
+    ax.axhline(y=0, color='#76c2f5', linestyle=':', linewidth=1.2, label='Sin agua')
 
     def _fmt_mes(x, _):
         try:
@@ -44,13 +45,16 @@ def _generar_grafico_estanque_pdf(df_normal, capacidad_maxima):
     ax.xaxis.set_major_locator(mdates.MonthLocator())
     ax.xaxis.set_major_formatter(plt.FuncFormatter(_fmt_mes))
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'{x:,.0f}'))
-    ax.tick_params(axis='both', labelsize=7.5)
-    ax.set_ylabel('Volumen (L)', fontsize=8)
-    ax.legend(fontsize=7.5, loc='upper right', framealpha=0.85)
-    ax.set_facecolor('#f8f9fa')
-    ax.grid(axis='y', color='gray', alpha=0.2)
+    ax.tick_params(axis='both', labelsize=7.5, colors='#151434')
+    ax.set_ylabel('Volumen (L)', fontsize=8, color='#151434')
+    ax.legend(fontsize=7.5, loc='upper right', framealpha=0.9,
+              facecolor='#f8f3ea', edgecolor='#2e68b1')
+    ax.set_facecolor('#f8f3ea')
+    ax.grid(axis='y', color='#2e68b1', alpha=0.12)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('#2e68b1')
+    ax.spines['bottom'].set_color('#2e68b1')
     fig.patch.set_facecolor('white')
     plt.tight_layout(pad=0.4)
 
@@ -58,277 +62,419 @@ def _generar_grafico_estanque_pdf(df_normal, capacidad_maxima):
     fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
     plt.close(fig)
 
-    # Leer dimensiones reales del PNG para calcular altura en el PDF
     buf.seek(16)
     w_px = struct.unpack('>I', buf.read(4))[0]
     h_px = struct.unpack('>I', buf.read(4))[0]
-    h_mm = 190.0 * h_px / w_px  # altura proporcional a 190mm de ancho
+    h_mm = 190.0 * h_px / w_px
 
     buf.seek(0)
     return buf, h_mm
 
 
+@st.cache_data(ttl=3600)
+def _calcular_pp_media_nacional():
+    """Precipitación anual media (mm/año) por estación CR2, solo años con ≥300 días válidos."""
+    df_est, df_diario, _, codigos = cargar_datos_crudos()
+    codigos_ok = [c for c in codigos if c in df_diario.columns]
+
+    anios  = df_diario['Fecha'].str.slice(0, 4)
+    subset = df_diario[codigos_ok].copy()
+    subset['_anio'] = anios
+
+    sum_anual   = subset.groupby('_anio')[codigos_ok].sum(min_count=1)
+    count_anual = subset.groupby('_anio')[codigos_ok].count()
+    sum_anual[count_anual < 300] = np.nan
+
+    pp_media  = sum_anual.mean()
+    df_est_ok = df_est[df_est['Codigo'].isin(codigos_ok)].copy()
+    df_est_ok['PP_media'] = df_est_ok['Codigo'].map(pp_media)
+    return df_est_ok.dropna(subset=['PP_media', 'Latitud', 'Longitud'])
+
+
+@st.cache_data(ttl=3600)
+def _triangular_delaunay():
+    """
+    Triangulación de Delaunay sobre las estaciones CR2.
+    Devuelve GeoJSON de triángulos + lista de PP media por triángulo.
+    Filtra aristas largas para evitar triángulos que crucen océano o zonas sin datos.
+    """
+    from scipy.spatial import Delaunay
+
+    df   = _calcular_pp_media_nacional()
+    pts  = df[['Longitud', 'Latitud']].values.astype(float)
+    vals = df['PP_media'].values.astype(float)
+
+    tri      = Delaunay(pts)
+    MAX_EDGE = 2.2  # grados — filtra triángulos que cruzan zonas sin estaciones
+
+    features  = []
+    tri_vals  = []
+
+    for simplex in tri.simplices:
+        coords = pts[simplex]
+        edges  = [
+            np.linalg.norm(coords[0] - coords[1]),
+            np.linalg.norm(coords[1] - coords[2]),
+            np.linalg.norm(coords[0] - coords[2]),
+        ]
+        if max(edges) > MAX_EDGE:
+            continue
+
+        ring = [[float(c[0]), float(c[1])] for c in coords]
+        ring.append(ring[0])  # cerrar polígono
+
+        features.append({
+            "type": "Feature",
+            "id": str(len(features)),
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+            "properties": {}
+        })
+        tri_vals.append(float(vals[simplex].mean()))
+
+    geojson = {"type": "FeatureCollection", "features": features}
+    return geojson, tri_vals, df
+
+
+def _logo_hires(path, target_w_px=600):
+    """Upscale logo PNG to target width using Lanczos for sharp rendering in PDF."""
+    try:
+        from PIL import Image
+        img = Image.open(path).convert("RGBA")
+        w, h = img.size
+        if w < target_w_px:
+            new_h = int(h * target_w_px / w)
+            img = img.resize((target_w_px, new_h), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        return buf
+    except Exception:
+        return path  # fallback: ruta original
+
+
 # ===============================================================
-# GENERADOR DE INFORME PDF
+# GENERADOR DE INFORME PDF — Identidad visual Fundación Amulén
 # ===============================================================
 def generar_informe_pdf(d):
     from datetime import date
 
-    # Colores
-    AZUL_OSC  = (26,  58,  92)
-    AZUL_MED  = (26, 111, 163)
-    AZUL_CLAR = (212, 237, 255)
-    GRIS      = (245, 245, 245)
-    BLANCO    = (255, 255, 255)
-    NEGRO     = (30,  30,  30)
-    AMARILLO  = (255, 243, 205)
-    CELESTE   = (209, 236, 241)
-    VERDE     = (212, 237, 218)
+    # Paleta oficial Amulén
+    AZUL_OSC   = (21,  20,  52)   # #151434
+    AZUL_BASE  = (46, 104, 177)   # #2e68b1
+    AZUL_CIELO = (118, 194, 245)  # #76c2f5
+    ARENA      = (248, 243, 234)  # #f8f3ea
+    VERDE_AC   = (225, 255, 188)  # #e1ffbc
+    BLANCO     = (255, 255, 255)
+    TEXTO      = (21,  20,  52)   # azul oscuro como negro corporativo
 
-    pdf = FPDF(orientation="P", unit="mm", format="A4")
-    pdf.set_auto_page_break(auto=True, margin=15)
+    # Colores escenarios (suaves, sobre paleta Amulén)
+    C_SECO    = (255, 243, 205)   # amarillo suave
+    C_NORMAL  = (209, 232, 248)   # azul cielo muy suave
+    C_LLUV    = (225, 255, 188)   # verde Amulén
+
+    # Logo Assets (blanco sobre oscuro) — upscaleado para evitar pixelación
+    import os
+    _LOGO_PATH = os.path.join("\U0001f5bc️ Assets", "Logo_Amulen..png")
+    LOGO_HEADER = _logo_hires(_LOGO_PATH, target_w_px=1200)
+    LOGO_FOOTER = _logo_hires(_LOGO_PATH, target_w_px=600)
+
+    _FONTS_DIR = os.path.join(os.path.dirname(__file__), "fonts")
+
+    # Subclase FPDF con footer automático (marca de agua logo)
+    class PDFAmulen(FPDF):
+        def footer(self):
+            H = 15  # altura total del footer
+            self.set_fill_color(*AZUL_OSC)
+            self.rect(0, self.h - H, 210, H, "F")
+            self.set_fill_color(*AZUL_CIELO)
+            self.rect(0, self.h - H, 210, 5, "F")
+            # Texto centrado verticalmente en la franja
+            self.set_y(self.h - H + 3)
+            self.set_font("Poppins", "I", 7)
+            self.set_text_color(*ARENA)
+            self.cell(0, 7,
+                      "Simulador SCALL  |  Fundacion Amulen - La Fundacion del Agua  |  Datos: CR2 Chile  |  www.cr2.cl",
+                      align="C")
+            # Logo alineado verticalmente en la franja
+            try:
+                self.image(LOGO_FOOTER, x=166, y=self.h - H + 1.5, w=38)
+            except Exception:
+                pass
+
+    pdf = PDFAmulen(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=19)
     pdf.add_page()
     pdf.set_margins(0, 0, 0)
 
-    W = 210  # ancho A4
+    # Registrar Poppins (tipografía corporativa Amulén)
+    pdf.add_font("Poppins",  "",  os.path.join(_FONTS_DIR, "Poppins-Regular.ttf"),    uni=True)
+    pdf.add_font("Poppins",  "B", os.path.join(_FONTS_DIR, "Poppins-Bold.ttf"),       uni=True)
+    pdf.add_font("Poppins",  "I", os.path.join(_FONTS_DIR, "Poppins-Italic.ttf"),     uni=True)
+    pdf.add_font("Poppins",  "BI",os.path.join(_FONTS_DIR, "Poppins-BoldItalic.ttf"), uni=True)
+
+    W = 210
+    hoy = date.today().strftime("%d/%m/%Y")
+
+    def fit_cell(w, h, txt, style="", size=8, fill=True, align="L", color=None):
+        """Renderiza celda ajustando el tamaño de fuente si el texto no cabe."""
+        if color:
+            pdf.set_text_color(*color)
+        sz = size
+        pdf.set_font("Poppins", style, sz)
+        while sz > 5.5 and pdf.get_string_width(str(txt)) > w - 1.5:
+            sz -= 0.5
+            pdf.set_font("Poppins", style, sz)
+        pdf.cell(w, h, str(txt), fill=fill, align=align)
+        pdf.set_font("Poppins", style, size)
+
+    def sec_title(titulo, y):
+        pdf.set_fill_color(*AZUL_CIELO)
+        pdf.rect(10, y, 3, 7, "F")
+        pdf.set_fill_color(*AZUL_BASE)
+        pdf.set_text_color(*BLANCO)
+        pdf.set_font("Poppins", "B", 9)
+        pdf.set_xy(13, y)
+        pdf.cell(187, 7, f"  {titulo}", fill=True, ln=True)
+        return pdf.get_y()
+
+    def kv_row(y, lbl, val, w_lbl=55, w_val=135, bg=BLANCO, size=8.5):
+        pdf.set_fill_color(*bg)
+        pdf.set_text_color(*TEXTO)
+        pdf.set_xy(10, y)
+        fit_cell(w_lbl, 6.5, lbl, style="B", size=size, fill=True)
+        fit_cell(w_val, 6.5, val, style="",  size=size, fill=True)
+        return y + 6.5
 
     # ── HEADER ────────────────────────────────────────────────
     pdf.set_fill_color(*AZUL_OSC)
-    pdf.rect(0, 0, W, 26, "F")
-    
-    # --- INSERCIÓN DEL LOGO AMULEN ---
+    pdf.rect(0, 0, W, 32, "F")
+    pdf.set_fill_color(*AZUL_CIELO)
+    pdf.rect(0, 32, W, 2.5, "F")
+
     try:
-        # Colocamos el logo a la derecha (x=165), arriba (y=4), con un ancho de 35mm
-        pdf.image("Logo_Amulen.png", x=165, y=4, w=35)
-    except:
-        # Si la imagen no existe, el PDF se genera igual sin el logo
+        pdf.image(LOGO_HEADER, x=152, y=5, w=48)
+    except Exception:
         pass
 
     pdf.set_text_color(*BLANCO)
-    pdf.set_font("Helvetica", "B", 17)
-    pdf.set_xy(12, 5)
-    pdf.cell(0, 9, "SIMULADOR SCALL", ln=True)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.set_xy(12, 15)
-    pdf.cell(0, 6, "Informe de Viabilidad de Cosecha de Aguas Lluvias")
+    pdf.set_font("Poppins", "B", 19)
+    pdf.set_xy(12, 6)
+    pdf.cell(135, 10, "SIMULADOR SCALL")
+    pdf.set_font("Poppins", "", 9)
+    pdf.set_text_color(*AZUL_CIELO)
+    pdf.set_xy(12, 18)
+    pdf.cell(135, 6, "Informe de Viabilidad  |  Cosecha de Aguas Lluvias")
+    pdf.set_font("Poppins", "I", 8)
+    pdf.set_text_color(200, 220, 240)
+    pdf.set_xy(12, 25)
+    pdf.cell(135, 5, "Fundacion Amulen  -  La Fundacion del Agua")
 
-    # ── BARRA NOMBRE PROYECTO ─────────────────────────────────
-    pdf.set_fill_color(*AZUL_MED)
-    pdf.rect(0, 26, W, 11, "F")
-    pdf.set_text_color(*BLANCO)
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.set_xy(12, 27)
-    pdf.cell(0, 9, d["nombre_proyecto"])
+    # ── BARRA NOMBRE PROYECTO (Arena) ─────────────────────────
+    pdf.set_fill_color(*ARENA)
+    pdf.rect(0, 34.5, W, 13, "F")
+    pdf.set_text_color(*AZUL_OSC)
+    pdf.set_font("Poppins", "B", 13)
+    pdf.set_xy(12, 36)
+    # Auto-ajuste si el nombre es largo
+    nombre_sz = 13
+    while nombre_sz > 8 and pdf.get_string_width(d["nombre_proyecto"]) > 180:
+        nombre_sz -= 0.5
+        pdf.set_font("Poppins", "B", nombre_sz)
+    pdf.cell(186, 9, d["nombre_proyecto"])
 
-    # ── LÍNEA FECHA ───────────────────────────────────────────
-    pdf.set_text_color(100, 100, 100)
-    pdf.set_font("Helvetica", "I", 8)
-    pdf.set_xy(12, 39)
+    # ── LÍNEA DE METADATOS ────────────────────────────────────
+    pdf.set_fill_color(*BLANCO)
+    pdf.rect(0, 47.5, W, 8, "F")
+    pdf.set_text_color(100, 100, 110)
+    pdf.set_font("Poppins", "I", 7.5)
+    pdf.set_xy(12, 49)
     pdf.cell(0, 5,
-             f"Fecha: {date.today().strftime('%d/%m/%Y')}   |   "
+             f"Generado el {hoy}   |   "
              f"Periodo analizado: {d['anio_inicio']}-{d['anio_fin']}   |   "
              f"Fuente climatica: CR2 Chile")
 
-    y = 47
+    y = 58
 
-    def sec_title(titulo, y):
-        pdf.set_fill_color(*AZUL_MED)
-        pdf.set_text_color(*BLANCO)
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.set_xy(10, y)
-        pdf.cell(190, 7, f"  {titulo}", fill=True, ln=True)
-        return pdf.get_y()
-
-    def kv(label, valor, y, x=10, w_label=62, w_val=83, alt=False):
-        bg = GRIS if alt else BLANCO
-        pdf.set_fill_color(*bg)
-        pdf.set_text_color(*NEGRO)
-        pdf.set_font("Helvetica", "B", 8.5)
-        pdf.set_xy(x, y)
-        pdf.cell(w_label, 6, label, fill=True)
-        pdf.set_font("Helvetica", "", 8.5)
-        pdf.cell(w_val, 6, str(valor), fill=True)
-        return y + 6
-
-    # ── SECCIÓN: PARÁMETROS (2 columnas) ─────────────────────
+    # ── SECCIÓN: PARÁMETROS ───────────────────────────────────
     y = sec_title("PARAMETROS DEL SISTEMA", y)
-    y_params = y
 
-    params_izq = [
-        ("Superficie del Techo",    f"{d['techo']} m2"),
-        ("Capacidad del Estanque",  f"{d['capacidad_maxima']:,.0f} Litros"),
-        ("Eficiencia de Captacion", f"{d['eficiencia']*100:.0f}%"),
-        ("Numero de Personas",      f"{d['numero_personas']}"),
-        ("Consumo por Persona",     f"{d['litros_persona_dia']} L/persona/dia"),
+    # Fila: 4 columnas (label | valor | label | valor)
+    params = [
+        ("Superficie del Techo",    f"{d['techo']} m2",
+         "Consumo Mensual Total",   f"{d['consumo_mensual']:,.0f} L/mes"),
+        ("Capacidad del Estanque",  f"{d['capacidad_maxima']:,.0f} L",
+         "Tipo de Uso",             d["tipo_uso"].split("(")[0].strip()),
+        ("Eficiencia de Captacion", f"{d['eficiencia']*100:.0f}%",
+         "Coordenadas",             f"{d['lat_proyecto']:.4f} / {d['lon_proyecto']:.4f}"),
+        ("Numero de Personas",      str(d['numero_personas']),
+         "Altitud del Proyecto",    f"{d['alt_proyecto']} m.s.n.m."),
+        ("Consumo por Persona",     f"{d['litros_persona_dia']} L/persona/dia",
+         "Periodo Analizado",       f"{d['anio_inicio']} - {d['anio_fin']}"),
     ]
-    params_der = [
-        ("Consumo Mensual Total",   f"{d['consumo_mensual']:,.0f} L/mes"),
-        ("Tipo de Uso",             d["tipo_uso"].split("(")[0].strip()),
-        ("Meses de Operacion",      ", ".join(d["meses_seleccionados"])),
-        ("Coordenadas",             f"{d['lat_proyecto']:.4f} / {d['lon_proyecto']:.4f}"),
-        ("Altitud del Proyecto",    f"{d['alt_proyecto']} m.s.n.m."),
-    ]
-    for i, ((l1, v1), (l2, v2)) in enumerate(zip(params_izq, params_der)):
-        bg = GRIS if i % 2 == 0 else BLANCO
+    for i, (l1, v1, l2, v2) in enumerate(params):
+        bg = ARENA if i % 2 == 0 else BLANCO
         pdf.set_fill_color(*bg)
-        pdf.set_text_color(*NEGRO)
-        # columna izquierda
-        pdf.set_xy(10, y_params + i * 6)
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.cell(38, 6, l1, fill=True)
-        pdf.set_font("Helvetica", "", 8)
-        pdf.cell(52, 6, v1, fill=True)
-        # columna derecha
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.cell(38, 6, l2, fill=True)
-        pdf.set_font("Helvetica", "", 8)
-        pdf.cell(52, 6, v2, fill=True)
+        pdf.set_text_color(*TEXTO)
+        pdf.set_xy(10, y)
+        fit_cell(42, 6.5, l1, style="B", size=7.5, fill=True)
+        fit_cell(53, 6.5, v1, style="",  size=7.5, fill=True)
+        fit_cell(42, 6.5, l2, style="B", size=7.5, fill=True)
+        fit_cell(53, 6.5, v2, style="",  size=7.5, fill=True)
+        y += 6.5
 
-    y_after_params = y_params + len(params_izq) * 6 + 3
+    # Meses de operacion en fila propia (puede ser texto largo)
+    pdf.set_fill_color(*AZUL_CIELO if len(params) % 2 == 0 else BLANCO)
+    meses_txt = ", ".join(d["meses_seleccionados"])
+    bg_m = ARENA if len(params) % 2 == 0 else BLANCO
+    pdf.set_fill_color(*bg_m)
+    pdf.set_text_color(*TEXTO)
+    pdf.set_xy(10, y)
+    fit_cell(42, 6.5, "Meses de Operacion", style="B", size=7.5, fill=True)
+    fit_cell(148, 6.5, meses_txt, style="", size=7.5, fill=True)
+    y += 6.5 + 3
 
     # ── SECCIÓN: ESTACIÓN ─────────────────────────────────────
-    y_est = sec_title("ESTACION METEOROLOGICA", y_after_params)
+    y = sec_title("ESTACION METEOROLOGICA UTILIZADA", y)
     station = [
-        ("Nombre",             d["est_nombre"]),
-        ("Codigo",             d["est_codigo"]),
-        ("Altitud",            f"{d['est_altitud']} m.s.n.m."),
-        ("Desnivel Proyecto",  f"{d['desnivel']} m"),
-        ("Distancia Efectiva", f"{d['distancia']:.1f} km (con correccion altitudinal)"),
-        ("Periodo con datos",  f"{d['anio_inicio']} - {d['anio_fin']}"),
-        ("Calidad de Datos",   f"{d['pct_calidad']:.1f}% de meses validos"),
+        ("Nombre de la Estacion",  d["est_nombre"]),
+        ("Codigo",                 d["est_codigo"]),
+        ("Altitud de la Estacion", f"{d['est_altitud']} m.s.n.m."),
+        ("Desnivel con Proyecto",  f"{d['desnivel']} m"),
+        ("Distancia Efectiva",     f"{d['distancia']:.1f} km (con correccion altitudinal)"),
+        ("Calidad de Datos",       f"{d['pct_calidad']:.1f}% de meses validos en el periodo"),
     ]
     for i, (lbl, val) in enumerate(station):
-        kv(lbl, val, y_est + i * 6, x=10, w_label=55, w_val=135, alt=(i % 2 == 0))
-
-    y = y_est + len(station) * 6 + 3
+        bg = ARENA if i % 2 == 0 else BLANCO
+        y = kv_row(y, lbl, str(val), bg=bg)
+    y += 4
 
     # ── SECCIÓN: TABLA RESULTADOS ─────────────────────────────
     y = sec_title("RESULTADOS POR ESCENARIO CLIMATICO", y)
 
-    col_ws  = [52, 14, 26, 28, 28, 22, 20]
-    headers = ["Escenario", "Ano", "Lluvia (mm)", "Captado (L)",
-               "Demanda (L)", "Cobertura %", "Dias sin agua"]
+    col_ws  = [55, 14, 27, 30, 28, 24, 12]
+    headers = ["Escenario", "Año", "Lluvia (mm)", "Captado (L)",
+               "Demanda (L)", "Cobertura", "Sin agua"]
 
     pdf.set_fill_color(*AZUL_OSC)
     pdf.set_text_color(*BLANCO)
-    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_font("Poppins", "B", 8)
     pdf.set_xy(10, y)
-    for h, w in zip(headers, col_ws):
-        pdf.cell(w, 8, h, border=1, align="C", fill=True)
+    for h, cw in zip(headers, col_ws):
+        pdf.cell(cw, 8, h, border=0, align="C", fill=True)
     y += 8
 
     escenarios = [
-        ("Ano Seco (P5)",        d["anio_seco"],     d["df_seco"],     AMARILLO),
-        ("Ano Normal (Mediana)", d["anio_mediano"],  d["df_normal"],   CELESTE),
-        ("Ano Lluvioso (P95)",   d["anio_lluvioso"], d["df_lluvioso"], VERDE),
+        ("Año Seco (P5)",        d["anio_seco"],     d["df_seco"],     C_SECO),
+        ("Año Normal (Mediana)", d["anio_mediano"],  d["df_normal"],   C_NORMAL),
+        ("Año Lluvioso (P95)",   d["anio_lluvioso"], d["df_lluvioso"], C_LLUV),
     ]
     for nombre_esc, anio_esc, df_esc, color in escenarios:
-        td   = df_esc["Demanda (L)"].sum()
-        # Manejo de tildes/nombres de columnas
+        td      = df_esc["Demanda (L)"].sum()
         col_def = "Déficit Diario (L)" if "Déficit Diario (L)" in df_esc.columns else "Deficit Diario (L)"
-        def_ = df_esc[col_def].sum()
-
-        ts   = td + def_
-        pct  = (ts / td * 100) if td > 0 else 100
-        dsag = int((df_esc[col_def] < 0).sum())
-        tc   = df_esc["Captado (L)"].sum()
-        lluv = d["totales_anio"].get(anio_esc, 0)
+        def_    = df_esc[col_def].sum()
+        ts      = td + def_
+        pct     = (ts / td * 100) if td > 0 else 100
+        dsag    = int((df_esc[col_def] < 0).sum())
+        tc      = df_esc["Captado (L)"].sum()
+        lluv    = d["totales_anio"].get(anio_esc, 0)
 
         pdf.set_fill_color(*color)
-        pdf.set_text_color(*NEGRO)
-        pdf.set_font("Helvetica", "B" if "Normal" in nombre_esc else "", 8)
+        pdf.set_text_color(*TEXTO)
+        pdf.set_font("Poppins", "B" if "Normal" in nombre_esc else "", 8)
         pdf.set_xy(10, y)
-        vals = [nombre_esc, str(anio_esc), f"{lluv:,.0f}", f"{tc:,.0f}",
-                f"{td:,.0f}", f"{pct:.1f}%", str(dsag)]
+        vals   = [nombre_esc, str(anio_esc), f"{lluv:,.0f}", f"{tc:,.0f}",
+                  f"{td:,.0f}", f"{pct:.1f}%", str(dsag)]
         aligns = ["L", "C", "C", "C", "C", "C", "C"]
-        for v, w, al in zip(vals, col_ws, aligns):
-            pdf.cell(w, 8, v, border=1, align=al, fill=True)
+        for v, cw, al in zip(vals, col_ws, aligns):
+            pdf.cell(cw, 8, v, border=0, align=al, fill=True)
         y += 8
 
-    y += 3
+    pdf.set_draw_color(*AZUL_CIELO)
+    pdf.line(10, y, 200, y)
+    y += 5
 
     # ── SECCIÓN: GRÁFICO NIVEL DEL ESTANQUE ──────────────────
-    y = sec_title(f"NIVEL DEL ESTANQUE - ANO NORMAL ({d['anio_mediano']})", y)
+    y = sec_title(f"NIVEL DEL ESTANQUE - AÑO NORMAL ({d['anio_mediano']})", y)
     try:
         chart_img, chart_h_mm = _generar_grafico_estanque_pdf(d["df_normal"], d["capacidad_maxima"])
         pdf.image(chart_img, x=10, y=y, w=190)
-        y += chart_h_mm + 4
-    except Exception as e:
+        y += chart_h_mm + 5
+    except Exception:
         pdf.set_xy(10, y)
-        pdf.set_font("Helvetica", "I", 8)
+        pdf.set_font("Poppins", "I", 8)
         pdf.set_text_color(150, 150, 150)
-        pdf.cell(190, 10, f"[Grafico no disponible]", align="C")
+        pdf.cell(190, 10, "[Grafico no disponible]", align="C")
         y += 14
 
     # ── SECCIÓN: TAMAÑO OPTIMO ────────────────────────────────
     if y > pdf.h - pdf.b_margin - 50:
         pdf.add_page()
         y = 15
-    y = sec_title("TAMANO OPTIMO DEL ESTANQUE (Ano Normal)", y)
+    y = sec_title("TAMANO OPTIMO DEL ESTANQUE (Año Normal)", y)
 
     curva = d.get("curva_normal") or calcular_curva_optimizacion(d["df_normal"], d["capacidad_maxima"])
     caps, efs, cap_opt, ef_act, ef_opt = curva
 
     kpis = [
-        ("Estanque actual",            f"{d['capacidad_maxima']:,.0f} L",
-         "Tamano optimo estimado",     f"{cap_opt:,.0f} L"),
+        ("Estanque ingresado",            f"{d['capacidad_maxima']:,.0f} L",
+         "Tamano optimo recomendado",     f"{cap_opt:,.0f} L"),
         ("Cobertura con estanque actual", f"{ef_act:.1f}%",
          "Cobertura con tamano optimo",   f"{ef_opt:.1f}%"),
     ]
     for i, (l1, v1, l2, v2) in enumerate(kpis):
-        bg = GRIS if i % 2 == 0 else BLANCO
+        bg = ARENA if i % 2 == 0 else BLANCO
         pdf.set_fill_color(*bg)
-        pdf.set_text_color(*NEGRO)
+        pdf.set_text_color(*TEXTO)
         pdf.set_xy(10, y)
-        pdf.set_font("Helvetica", "B", 8.5)
-        pdf.cell(55, 6, l1, fill=True)
-        pdf.set_font("Helvetica", "B", 8.5)
-        pdf.set_text_color(*AZUL_MED)
-        pdf.cell(40, 6, v1, fill=True)
-        pdf.set_text_color(*NEGRO)
-        pdf.set_font("Helvetica", "B", 8.5)
-        pdf.cell(55, 6, l2, fill=True)
-        pdf.set_font("Helvetica", "B", 8.5)
-        pdf.set_text_color(*AZUL_MED)
-        pdf.cell(40, 6, v2, fill=True)
-        y += 6
+        fit_cell(58, 7, l1, style="B", size=8.5, fill=True)
+        fit_cell(37, 7, v1, style="B", size=8.5, fill=True, color=AZUL_BASE)
+        pdf.set_text_color(*TEXTO)
+        fit_cell(58, 7, l2, style="B", size=8.5, fill=True, color=TEXTO)
+        fit_cell(37, 7, v2, style="B", size=8.5, fill=True, color=AZUL_BASE)
+        y += 7
 
-    y += 3
+    y += 5
 
-    # ── SECCIÓN: CONCLUSIÓN ───────────────────────────────────
-    y = sec_title("CONCLUSION", y)
+    # ── SECCIÓN: CONCLUSIONES ─────────────────────────────────
+    y = sec_title("CONCLUSIONES Y RECOMENDACIONES", y)
 
-    td_n  = d["df_normal"]["Demanda (L)"].sum()
+    td_n      = d["df_normal"]["Demanda (L)"].sum()
     col_def_n = "Déficit Diario (L)" if "Déficit Diario (L)" in d["df_normal"].columns else "Deficit Diario (L)"
-    def_n = d["df_normal"][col_def_n].sum()
-    pct_n = ((td_n + def_n) / td_n * 100) if td_n > 0 else 100
+    def_n     = d["df_normal"][col_def_n].sum()
+    pct_n     = ((td_n + def_n) / td_n * 100) if td_n > 0 else 100
 
     col_def_s = "Déficit Diario (L)" if "Déficit Diario (L)" in d["df_seco"].columns else "Deficit Diario (L)"
-    dsag_s = int((d["df_seco"][col_def_s] < 0).sum())
+    dsag_s    = int((d["df_seco"][col_def_s] < 0).sum())
+
+    viabilidad = "VIABLE" if pct_n >= 60 else ("PARCIALMENTE VIABLE" if pct_n >= 30 else "NO RECOMENDADO")
 
     lineas = [
-        f"En el ano normal ({d['anio_mediano']}), el sistema cubre el {pct_n:.1f}% de la demanda anual con el estanque actual de {d['capacidad_maxima']:,.0f} L.",
-        f"Para alcanzar maxima eficiencia se recomienda un estanque de {cap_opt:,.0f} L ({ef_opt:.1f}% de cobertura).",
-        f"En el ano seco (P5, {d['anio_seco']}), hay {dsag_s} dias sin suministro. Se recomienda considerar una fuente complementaria para esos periodos.",
-        f"Analisis basado en {d['anio_fin'] - d['anio_inicio'] + 1} anos de datos historicos de la estacion {d['est_nombre']}.",
+        (f"Viabilidad general del sistema: {viabilidad}  ({pct_n:.1f}% de cobertura en año normal)", "B"),
+        (f"En el año normal ({d['anio_mediano']}), el sistema cubre el {pct_n:.1f}% de la demanda "
+         f"anual con el estanque actual de {d['capacidad_maxima']:,.0f} L. "
+         f"Los datos corresponden a {d['anio_fin'] - d['anio_inicio'] + 1} años de registros "
+         f"históricos de la estación {d['est_nombre']}.", ""),
+        (f"Para maximizar la eficiencia, se recomienda un estanque de {cap_opt:,.0f} L, "
+         f"con el cual se alcanza una cobertura del {ef_opt:.1f}% en el año normal.", ""),
+        (f"En el año seco (percentil 5, año {d['anio_seco']}), se registran {dsag_s} días sin "
+         f"suministro. Se recomienda disponer de una fuente de abastecimiento complementaria "
+         f"para cubrir estos períodos críticos.", ""),
+        (f"Informe generado el {hoy} con datos del Centro de Ciencia del Clima y la Resiliencia (CR)2.", "I"),
     ]
-    pdf.set_text_color(*NEGRO)
-    for linea in lineas:
-        pdf.set_font("Helvetica", "", 8.5)
-        if y > pdf.h - pdf.b_margin - 20:
+
+    # Fondo Arena para todo el bloque de conclusiones
+    pdf.set_fill_color(*ARENA)
+    pdf.rect(10, y, 190, 60, "F")
+
+    pdf.set_text_color(*TEXTO)
+    for txt, style in lineas:
+        if y > pdf.h - pdf.b_margin - 18:
             pdf.add_page()
             y = 15
-        pdf.set_xy(10, y)
-        pdf.multi_cell(190, 5.5, linea)
-        y = pdf.get_y() + 2
-
-    # ── FOOTER ────────────────────────────────────────────────
-    pdf.set_y(-12)
-    pdf.set_font("Helvetica", "I", 7)
-    pdf.set_text_color(150, 150, 150)
-    pdf.cell(0, 5,
-             "Generado por Simulador SCALL  |  Datos climaticos: Centro de Ciencia del Clima y la Resiliencia (CR)2  |  www.cr2.cl",
-             align="C")
+        pdf.set_font("Poppins", style, 8.5)
+        pdf.set_xy(13, y)
+        pdf.multi_cell(185, 5.5, txt)
+        y = pdf.get_y() + 3
 
     return io.BytesIO(pdf.output())
 
@@ -337,6 +483,13 @@ def generar_informe_pdf(d):
 # ===============================================================
 st.markdown("""
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap');
+
+html, body, [class*="css"], .stMarkdown, .stText, h1, h2, h3, h4, p, label, div {
+    font-family: 'Poppins', sans-serif !important;
+}
+
+
 button[kind="primary"] {
     color: black !important;
     font-weight: bold !important;
@@ -357,6 +510,17 @@ span[data-baseweb="tag"] svg {
 # ===============================================================
 # SIDEBAR
 # ===============================================================
+st.sidebar.markdown(
+    """
+    <div style="background-color:#151434; border-radius:8px; padding:16px 12px 12px 12px; margin-bottom:12px;">
+        <img src="data:image/png;base64,{logo_b64}" style="width:100%;">
+    </div>
+    """.replace("{logo_b64}", __import__('base64').b64encode(
+        open("\U0001f5bc️ Assets/Logo_Amulen..png", "rb").read()
+    ).decode()),
+    unsafe_allow_html=True,
+)
+st.sidebar.markdown("---")
 st.sidebar.header("1. Datos del Proyecto")
 nombre_proyecto  = st.sidebar.text_input("Nombre del Proyecto/Lugar", "Mi Proyecto SCALL")
 techo            = st.sidebar.number_input("Superficie del Techo (m2)", min_value=10.0, value=120.0)
@@ -405,9 +569,46 @@ umbral_calidad = st.sidebar.slider(
 )
 
 st.sidebar.header("3. Coordenadas de Ubicación")
-st.sidebar.write("Ingresa la latitud, longitud y altitud de tu proyecto.")
-lat_proyecto = st.sidebar.number_input("Latitud",  value=-33.4500, format="%.4f")
-lon_proyecto = st.sidebar.number_input("Longitud", value=-70.6500, format="%.4f")
+
+_modo_coord = st.sidebar.radio(
+    "Método de ingreso",
+    ["Coordenadas manuales", "Link de Google Maps"],
+    horizontal=True,
+)
+
+def _extraer_coords_gmaps(url: str):
+    """Extrae latitud y longitud desde un link de Google Maps."""
+    import re
+    # Formato: @lat,lon o /place/.../@lat,lon o ?q=lat,lon
+    patrones = [
+        r'@(-?\d+\.\d+),(-?\d+\.\d+)',
+        r'[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)',
+        r'll=(-?\d+\.\d+),(-?\d+\.\d+)',
+    ]
+    for pat in patrones:
+        m = re.search(pat, url)
+        if m:
+            return float(m.group(1)), float(m.group(2))
+    return None, None
+
+if _modo_coord == "Link de Google Maps":
+    _gmaps_url = st.sidebar.text_input(
+        "Pega el link de Google Maps",
+        placeholder="https://maps.google.com/...",
+    )
+    _lat_gmaps, _lon_gmaps = _extraer_coords_gmaps(_gmaps_url) if _gmaps_url else (None, None)
+    if _gmaps_url and _lat_gmaps is None:
+        st.sidebar.warning("No se pudieron extraer coordenadas del link. Verifica que sea un link de Google Maps con ubicación.")
+    _lat_default  = _lat_gmaps  if _lat_gmaps  is not None else -33.4500
+    _lon_default  = _lon_gmaps  if _lon_gmaps  is not None else -70.6500
+    if _lat_gmaps is not None:
+        st.sidebar.success(f"Coordenadas detectadas: {_lat_gmaps:.4f}, {_lon_gmaps:.4f}")
+    lat_proyecto = st.sidebar.number_input("Latitud",  value=_lat_default, format="%.4f")
+    lon_proyecto = st.sidebar.number_input("Longitud", value=_lon_default, format="%.4f")
+else:
+    st.sidebar.write("Ingresa la latitud y longitud de tu proyecto.")
+    lat_proyecto = st.sidebar.number_input("Latitud",  value=-33.4500, format="%.4f")
+    lon_proyecto = st.sidebar.number_input("Longitud", value=-70.6500, format="%.4f")
 
 if st.sidebar.button("📍 Obtener altitud automáticamente"):
     with st.sidebar:
@@ -771,7 +972,7 @@ def mostrar_detalles_escenario(df_slice, nombre, key_suffix="", curva_opt=None):
 # ===============================================================
 # TABS
 # ===============================================================
-tab1, tab2 = st.tabs([" Simulación Histórica y Escenarios", " Resumen Mensual Histórico"])
+tab1, tab2, tab3 = st.tabs([" Simulación Histórica y Escenarios", " Resumen Mensual Histórico", " Mapa de Factibilidad Nacional"])
 
 if 'simulacion_calculada' not in st.session_state:
     st.session_state.simulacion_calculada = False
@@ -1160,6 +1361,172 @@ with tab2:
                            coloraxis_showscale=False)
         st.plotly_chart(fig3, use_container_width=True,
                         config={'scrollZoom': False, 'displayModeBar': True})
+
+# ===============================================================
+# TAB 3 — MAPA DE FACTIBILIDAD NACIONAL
+# ===============================================================
+with tab3:
+    st.markdown("### 🗺️ Mapa de Factibilidad Nacional — Cosecha de Aguas Lluvias")
+    st.write(
+        "Zonas trianguladas entre ~400 estaciones CR2 (2000–2020). "
+        "Cada triángulo representa la zona entre estaciones reales con el valor interpolado de su área."
+    )
+
+    with st.spinner("Construyendo triangulación de Delaunay..."):
+        _geojson_tri, _vals_tri, df_mapa_nac = _triangular_delaunay()
+
+    _ids_tri = [str(i) for i in range(len(_vals_tri))]
+
+    # Colorscale precipitación: blanco → celeste → azul base → azul oscuro Amulén
+    CS_PP = [
+        [0.00, "#f0f8ff"],   # casi blanco (zonas muy secas)
+        [0.15, "#cce9fa"],   # azul muy claro
+        [0.35, "#76c2f5"],   # celeste Amulén
+        [0.65, "#2e68b1"],   # azul base Amulén
+        [1.00, "#151434"],   # azul oscuro Amulén
+    ]
+
+    # Colorscale semáforo para cobertura (rojo → verde)
+    CS_COBERTURA = [
+        [0.00, "#d73027"],
+        [0.25, "#f46d43"],
+        [0.50, "#fee08b"],
+        [0.75, "#66bd63"],
+        [1.00, "#1a9850"],
+    ]
+
+    LAYOUT_MAPA = dict(
+        mapbox=dict(style='open-street-map', center=dict(lat=-37.0, lon=-71.5), zoom=4),
+        margin=dict(l=0, r=0, t=0, b=0), height=680,
+        legend=dict(
+            yanchor="top", y=0.99, xanchor="left", x=0.01,
+            bgcolor="rgba(255,255,255,0.88)", bordercolor="#cccccc",
+            borderwidth=1, font=dict(size=11),
+        ),
+    )
+
+    hover_est = (
+        "<b>" + df_mapa_nac['Nombre'] + "</b><br>"
+        + "PP media: " + df_mapa_nac['PP_media'].round(0).astype(int).astype(str) + " mm/año"
+    )
+
+    maptab1, maptab2 = st.tabs(["Precipitación Media Anual", "Factibilidad según tus parámetros"])
+
+    with maptab1:
+        fig_nac = go.Figure()
+        fig_nac.add_trace(go.Choroplethmapbox(
+            geojson=_geojson_tri,
+            locations=_ids_tri,
+            z=_vals_tri,
+            colorscale=CS_PP,
+            zmin=0, zmax=2500,
+            marker_opacity=0.72,
+            marker_line_width=0.3,
+            marker_line_color="rgba(255,255,255,0.25)",
+            colorbar=dict(
+                title="mm/año",
+                tickvals=[0, 200, 500, 1000, 2000, 2500],
+                ticktext=["0", "200", "500", "1.000", "2.000", "2.500+"],
+                thickness=14, len=0.65,
+            ),
+            hovertemplate="<b>PP media:</b> %{z:.0f} mm/año<extra></extra>",
+            name="Precipitación",
+        ))
+        # Estaciones como puntos de referencia
+        fig_nac.add_trace(go.Scattermapbox(
+            lat=df_mapa_nac['Latitud'], lon=df_mapa_nac['Longitud'],
+            mode='markers',
+            marker=dict(size=4, color='rgba(21,20,52,0.55)'),
+            text=hover_est,
+            hovertemplate='%{text}<extra></extra>',
+            name="Estaciones CR2",
+        ))
+        fig_nac.update_layout(**LAYOUT_MAPA)
+        st.plotly_chart(fig_nac, use_container_width=True, config={'scrollZoom': True})
+
+        st.info(
+            "**¿Cómo leer el mapa?**  Cada zona triangulada entre estaciones muestra la "
+            "precipitación media anual interpolada (2000–2020).\n\n"
+            "| Color | PP media anual | Zona típica |\n"
+            "|-------|---------------|-------------|\n"
+            "| ⬜ Blanco | < 100 mm | Norte Grande (Tarapacá, Antofagasta) |\n"
+            "| 🔵 Azul muy claro | 100–300 mm | Norte Chico (Atacama, Coquimbo) |\n"
+            "| 🔵 Celeste | 300–800 mm | Zona Central (Valparaíso, Maule) |\n"
+            "| 🔵 Azul medio | 800–1.500 mm | La Araucanía, Los Ríos |\n"
+            "| 🟣 Azul oscuro | > 1.500 mm | Los Lagos, Aysén, Magallanes |\n\n"
+            "*Triangulación de Delaunay sobre ~400 estaciones CR2. Los puntos negros son las "
+            "estaciones reales. Las zonas sin triángulos no tienen cobertura de datos.*"
+        )
+
+    with maptab2:
+        consumo_diario_mapa = numero_personas * litros_persona_dia
+        dias_op_año_mapa    = len(meses_num_seleccionados) * (30 if consumo_fines_semana else 22)
+        demanda_anual_mapa  = consumo_diario_mapa * dias_op_año_mapa
+
+        if demanda_anual_mapa <= 0 or len(meses_num_seleccionados) == 0:
+            st.warning("Define el consumo y los meses de operación en la barra lateral para ver este mapa.")
+        else:
+            # Cobertura por triángulo usando la PP media de cada uno
+            vals_cob = [
+                min(v * techo * eficiencia / demanda_anual_mapa * 100, 100)
+                for v in _vals_tri
+            ]
+
+            st.write(
+                f"Cobertura estimada con techo **{techo:.0f} m²**, eficiencia **{eficiencia*100:.0f}%**, "
+                f"consumo **{consumo_diario_mapa:.0f} L/día** y **{len(meses_num_seleccionados)} meses** "
+                f"de operación. *Estimación simplificada — no incluye el efecto de almacenamiento del estanque.*"
+            )
+
+            fig_dyn = go.Figure()
+            fig_dyn.add_trace(go.Choroplethmapbox(
+                geojson=_geojson_tri,
+                locations=_ids_tri,
+                z=vals_cob,
+                colorscale=CS_PP,
+                zmin=0, zmax=100,
+                marker_opacity=0.72,
+                marker_line_width=0.3,
+                marker_line_color="rgba(255,255,255,0.25)",
+                colorbar=dict(
+                    title="Cobertura %",
+                    tickvals=[0, 20, 40, 60, 80, 100],
+                    ticktext=["0%", "20%", "40%", "60%", "80%", "100%"],
+                    thickness=14, len=0.65,
+                ),
+                hovertemplate="<b>Cobertura estimada:</b> %{z:.1f}%<extra></extra>",
+                name="Cobertura",
+            ))
+            fig_dyn.add_trace(go.Scattermapbox(
+                lat=df_mapa_nac['Latitud'], lon=df_mapa_nac['Longitud'],
+                mode='markers',
+                marker=dict(size=4, color='rgba(21,20,52,0.55)'),
+                text=hover_est,
+                hovertemplate='%{text}<extra></extra>',
+                name="Estaciones CR2",
+            ))
+
+            if 'informe_datos' in st.session_state:
+                id_ = st.session_state['informe_datos']
+                fig_dyn.add_trace(go.Scattermapbox(
+                    lat=[id_['lat_proyecto']], lon=[id_['lon_proyecto']],
+                    mode='markers+text',
+                    marker=dict(size=14, color='#151434'),
+                    text=[id_['nombre_proyecto']],
+                    textposition="top right",
+                    hovertemplate=f"<b>{id_['nombre_proyecto']}</b><extra></extra>",
+                    name="Tu proyecto",
+                ))
+
+            fig_dyn.update_layout(**LAYOUT_MAPA)
+            st.plotly_chart(fig_dyn, use_container_width=True, config={'scrollZoom': True})
+
+            st.info(
+                "La cobertura se estima como **(PP media × techo × eficiencia) ÷ demanda anual**. "
+                "No incluye el efecto de amortiguación del estanque — zonas con lluvia concentrada "
+                "en pocos meses pueden aparecer con cobertura más baja de la real."
+            )
+
 
 # ===============================================================
 # BOTÓN DE INFORME FINAL
