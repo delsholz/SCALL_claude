@@ -1,17 +1,35 @@
 """
 Historial de simulaciones SCALL usando la API REST de Supabase (via requests).
 No requiere el paquete supabase-py — usa requests que ya está en requirements.txt.
+
+Credenciales (en orden de prioridad):
+  1. .streamlit/secrets.toml  → [supabase] url / key
+  2. Variables de entorno      → SUPABASE_URL / SUPABASE_KEY
 """
 import io
 import json
+import os
 import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
 
 
+def _get_supabase_config():
+    """Retorna (url, key) desde secrets.toml o variables de entorno."""
+    try:
+        return st.secrets["supabase"]["url"], st.secrets["supabase"]["key"]
+    except Exception:
+        pass
+    url = os.environ.get("SUPABASE_URL", "")
+    key = os.environ.get("SUPABASE_KEY", "")
+    if url and key:
+        return url, key
+    return None, None
+
+
 def _headers():
-    key = st.secrets["supabase"]["key"]
+    _, key = _get_supabase_config()
     return {
         "apikey": key,
         "Authorization": f"Bearer {key}",
@@ -21,17 +39,13 @@ def _headers():
 
 
 def _base_url():
-    url = st.secrets["supabase"]["url"].rstrip("/")
-    return f"{url}/rest/v1/simulaciones"
+    url, _ = _get_supabase_config()
+    return f"{url.rstrip('/')}/rest/v1/simulaciones"
 
 
 def _supabase_disponible():
-    try:
-        _ = st.secrets["supabase"]["url"]
-        _ = st.secrets["supabase"]["key"]
-        return True
-    except Exception:
-        return False
+    url, key = _get_supabase_config()
+    return bool(url and key)
 
 
 # ---------------------------------------------------------------------------
