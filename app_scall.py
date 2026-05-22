@@ -174,11 +174,12 @@ def generar_informe_pdf(d):
 
     # Logo Assets (blanco sobre oscuro) — upscaleado para evitar pixelación
     import os
-    _LOGO_PATH = os.path.join("assets", "Logo_Amulen_blanco.png")
+    _BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
+    _LOGO_PATH = os.path.join(_BASE_DIR, "assets", "Logo_Amulen_blanco.png")
     LOGO_HEADER = _logo_hires(_LOGO_PATH, target_w_px=1200)
     LOGO_FOOTER = _logo_hires(_LOGO_PATH, target_w_px=600)
 
-    _FONTS_DIR = os.path.join(os.path.dirname(__file__), "fonts")
+    _FONTS_DIR = os.path.join(_BASE_DIR, "fonts")
 
     # Subclase FPDF con footer automático (marca de agua logo)
     class PDFAmulen(FPDF):
@@ -516,7 +517,7 @@ st.sidebar.markdown(
         <img src="data:image/png;base64,{logo_b64}" style="width:100%;">
     </div>
     """.replace("{logo_b64}", __import__('base64').b64encode(
-        open("assets/Logo_Amulen_blanco.png", "rb").read()
+        open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "Logo_Amulen_blanco.png"), "rb").read()
     ).decode()),
     unsafe_allow_html=True,
 )
@@ -786,8 +787,7 @@ def mostrar_detalles_escenario(df_slice, nombre, key_suffix="", curva_opt=None):
     ))
 
     # Punto marcado: Óptimo (solo si difiere del actual)
-    if abs(cap_optima - capacidad_maxima) > 1000:
-        idx_opt = capacidades_prueba.index(cap_optima)
+    if abs(cap_optima - capacidad_maxima) > 1000 and cap_optima in capacidades_prueba:
         fig_opt.add_trace(go.Scatter(
             x=[cap_optima], y=[ef_optima],
             mode='markers',
