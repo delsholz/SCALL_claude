@@ -174,12 +174,11 @@ def generar_informe_pdf(d):
 
     # Logo Assets (blanco sobre oscuro) — upscaleado para evitar pixelación
     import os
-    _BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
-    _LOGO_PATH  = os.path.join(_BASE_DIR, "assets", "Logo_Amulen_blanco.png")
+    _LOGO_PATH = os.path.join("assets", "Logo_Amulen_blanco.png")
     LOGO_HEADER = _logo_hires(_LOGO_PATH, target_w_px=1200)
     LOGO_FOOTER = _logo_hires(_LOGO_PATH, target_w_px=600)
 
-    _FONTS_DIR = os.path.join(_BASE_DIR, "fonts")
+    _FONTS_DIR = os.path.join(os.path.dirname(__file__), "fonts")
 
     # Subclase FPDF con footer automático (marca de agua logo)
     class PDFAmulen(FPDF):
@@ -371,10 +370,11 @@ def generar_informe_pdf(d):
     ]
     for nombre_esc, anio_esc, df_esc, color in escenarios:
         td      = df_esc["Demanda (L)"].sum()
-        def_    = df_esc["Déficit Diario (L)"].sum()
+        col_def = "Déficit Diario (L)" if "Déficit Diario (L)" in df_esc.columns else "Deficit Diario (L)"
+        def_    = df_esc[col_def].sum()
         ts      = td + def_
         pct     = (ts / td * 100) if td > 0 else 100
-        dsag    = int((df_esc["Déficit Diario (L)"] < 0).sum())
+        dsag    = int((df_esc[col_def] < 0).sum())
         tc      = df_esc["Captado (L)"].sum()
         lluv    = d["totales_anio"].get(anio_esc, 0)
 
@@ -439,9 +439,12 @@ def generar_informe_pdf(d):
     y = sec_title("CONCLUSIONES Y RECOMENDACIONES", y)
 
     td_n      = d["df_normal"]["Demanda (L)"].sum()
-    def_n  = d["df_normal"]["Déficit Diario (L)"].sum()
-    pct_n  = ((td_n + def_n) / td_n * 100) if td_n > 0 else 100
-    dsag_s = int((d["df_seco"]["Déficit Diario (L)"] < 0).sum())
+    col_def_n = "Déficit Diario (L)" if "Déficit Diario (L)" in d["df_normal"].columns else "Deficit Diario (L)"
+    def_n     = d["df_normal"][col_def_n].sum()
+    pct_n     = ((td_n + def_n) / td_n * 100) if td_n > 0 else 100
+
+    col_def_s = "Déficit Diario (L)" if "Déficit Diario (L)" in d["df_seco"].columns else "Deficit Diario (L)"
+    dsag_s    = int((d["df_seco"][col_def_s] < 0).sum())
 
     viabilidad = "VIABLE" if pct_n >= 60 else ("PARCIALMENTE VIABLE" if pct_n >= 30 else "NO RECOMENDADO")
 
@@ -513,7 +516,7 @@ st.sidebar.markdown(
         <img src="data:image/png;base64,{logo_b64}" style="width:100%;">
     </div>
     """.replace("{logo_b64}", __import__('base64').b64encode(
-        open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "Logo_Amulen_blanco.png"), "rb").read()
+        open("assets/Logo_Amulen_blanco.png", "rb").read()
     ).decode()),
     unsafe_allow_html=True,
 )
@@ -783,7 +786,8 @@ def mostrar_detalles_escenario(df_slice, nombre, key_suffix="", curva_opt=None):
     ))
 
     # Punto marcado: Óptimo (solo si difiere del actual)
-    if abs(cap_optima - capacidad_maxima) > 1000 and cap_optima in capacidades_prueba:
+    if abs(cap_optima - capacidad_maxima) > 1000:
+        idx_opt = capacidades_prueba.index(cap_optima)
         fig_opt.add_trace(go.Scatter(
             x=[cap_optima], y=[ef_optima],
             mode='markers',

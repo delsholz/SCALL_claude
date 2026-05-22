@@ -16,7 +16,7 @@ def simular_continua(df_diario, codigo_estacion, anio_inicio, anio_fin,
 
     consumo_diario = numero_personas * litros_persona_dia
     mask_mes = df['Mes_Num'].isin(meses_num_seleccionados)
-    mask_dia = np.ones(len(df), dtype=bool) if consumo_fines_semana else (df['Dia_Semana'] < 5)
+    mask_dia = True if consumo_fines_semana else (df['Dia_Semana'] < 5)
 
     df['Demanda (L)'] = np.where(mask_mes & mask_dia, consumo_diario, 0)
     # AQUI SE APLICA EL GRADIENTE OROGRAFICO A LA LLUVIA:
