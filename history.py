@@ -1,18 +1,42 @@
+"""
+Historial de simulaciones SCALL usando la API REST de Supabase (via requests).
+No requiere el paquete supabase-py — usa requests que ya está en requirements.txt.
+"""
 import io
+import json
 import numpy as np
 import pandas as pd
+import requests
 import streamlit as st
 
 
-def _get_client():
-    try:
-        from supabase import create_client
-        url = st.secrets["supabase"]["url"]
-        key = st.secrets["supabase"]["key"]
-        return create_client(url, key)
-    except Exception:
-        return None
+def _headers():
+    key = st.secrets["supabase"]["key"]
+    return {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal",
+    }
 
+
+def _base_url():
+    url = st.secrets["supabase"]["url"].rstrip("/")
+    return f"{url}/rest/v1/simulaciones"
+
+
+def _supabase_disponible():
+    try:
+        _ = st.secrets["supabase"]["url"]
+        _ = st.secrets["supabase"]["key"]
+        return True
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Serialización / Deserialización
+# ---------------------------------------------------------------------------
 
 def _df_a_json(df):
     if df is None or not isinstance(df, pd.DataFrame):
@@ -160,12 +184,14 @@ def _extraer_metricas(d):
     return pct_cubierto_normal, dias_sin_agua_normal, cap_optima
 
 
-def guardar_simulacion(informe_datos):
-    """Saves a simulation to Supabase. Returns True on success."""
-    client = _get_client()
-    if client is None:
-        return False
+# ---------------------------------------------------------------------------
+# API pública
+# ---------------------------------------------------------------------------
 
+def guardar_simulacion(informe_datos):
+    """Guarda una simulación en Supabase. Retorna True si tuvo éxito."""
+    if not _supabase_disponible():
+        return False
     try:
         pct, dias, cap_opt = _extraer_metricas(informe_datos)
         serial = _serializar_informe(informe_datos)
@@ -197,29 +223,39 @@ def guardar_simulacion(informe_datos):
             'informe_datos_json': serial,
         }
 
-        client.table('simulaciones').insert(row).execute()
-        return True
+        resp = requests.post(
+            _base_url(),
+            headers=_headers(),
+            data=json.dumps(row, ensure_ascii=False),
+            timeout=15,
+        )
+        return resp.status_code in (200, 201)
     except Exception:
         return False
 
 
 def cargar_historial():
-    """Returns a DataFrame with simulation metadata rows (no JSON blobs)."""
-    client = _get_client()
-    if client is None:
+    """Retorna DataFrame con metadatos de simulaciones (sin blobs JSON)."""
+    if not _supabase_disponible():
         return pd.DataFrame()
-
     try:
-        resp = client.table('simulaciones').select(
+        cols = (
             'id,fecha_simulacion,nombre_proyecto,est_nombre,est_codigo,'
             'techo,capacidad_maxima,numero_personas,pct_cubierto_normal,'
             'dias_sin_agua_normal,cap_optima,anio_seco,anio_mediano,anio_lluvioso'
-        ).order('fecha_simulacion', desc=True).execute()
-
-        if not resp.data:
+        )
+        resp = requests.get(
+            _base_url(),
+            headers={**_headers(), "Prefer": ""},
+            params={'select': cols, 'order': 'fecha_simulacion.desc'},
+            timeout=10,
+        )
+        if not resp.ok:
             return pd.DataFrame()
-
-        df = pd.DataFrame(resp.data)
+        data = resp.json()
+        if not data:
+            return pd.DataFrame()
+        df = pd.DataFrame(data)
         df['fecha_simulacion'] = pd.to_datetime(df['fecha_simulacion'])
         return df
     except Exception:
@@ -227,34 +263,35 @@ def cargar_historial():
 
 
 def cargar_simulacion_completa(sim_id):
-    """Returns the full informe_datos dict for a simulation ID."""
-    client = _get_client()
-    if client is None:
+    """Retorna el informe_datos completo de una simulación por ID."""
+    if not _supabase_disponible():
         return None
-
     try:
-        resp = (
-            client.table('simulaciones')
-            .select('informe_datos_json')
-            .eq('id', sim_id)
-            .limit(1)
-            .execute()
+        resp = requests.get(
+            _base_url(),
+            headers={**_headers(), "Prefer": ""},
+            params={'select': 'informe_datos_json', 'id': f'eq.{sim_id}', 'limit': '1'},
+            timeout=20,
         )
-        if not resp.data:
+        if not resp.ok or not resp.json():
             return None
-        return _deserializar_informe(resp.data[0]['informe_datos_json'])
+        j = resp.json()[0]['informe_datos_json']
+        return _deserializar_informe(j)
     except Exception:
         return None
 
 
 def eliminar_simulacion(sim_id):
-    """Deletes a simulation by ID. Returns True on success."""
-    client = _get_client()
-    if client is None:
+    """Elimina una simulación por ID. Retorna True si tuvo éxito."""
+    if not _supabase_disponible():
         return False
-
     try:
-        client.table('simulaciones').delete().eq('id', sim_id).execute()
-        return True
+        resp = requests.delete(
+            _base_url(),
+            headers=_headers(),
+            params={'id': f'eq.{sim_id}'},
+            timeout=10,
+        )
+        return resp.status_code in (200, 204)
     except Exception:
         return False
