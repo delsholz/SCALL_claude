@@ -30,6 +30,55 @@ except Exception:
 _MESES_ES = {1:'Ene',2:'Feb',3:'Mar',4:'Abr',5:'May',6:'Jun',
              7:'Jul',8:'Ago',9:'Sep',10:'Oct',11:'Nov',12:'Dic'}
 
+def _generar_grafico_curva_optima_pdf(caps, efs, cap_opt, ef_act, ef_opt, capacidad_maxima):
+    import struct
+    fig, ax = plt.subplots(figsize=(9.5, 3.2))
+
+    ax.plot(caps, efs, color='#2e68b1', linewidth=2.2, marker='o', markersize=3.5,
+            markerfacecolor='#76c2f5', label='Cobertura simulada')
+
+    # Punto actual
+    ax.axvline(x=capacidad_maxima, color='#e05c2e', linestyle='--', linewidth=1.4,
+               label=f'Estanque actual ({capacidad_maxima:,.0f} L)')
+    if ef_act is not None:
+        ax.scatter([capacidad_maxima], [ef_act], color='#e05c2e', s=60, zorder=5)
+
+    # Punto óptimo
+    if cap_opt is not None and ef_opt is not None:
+        ax.axvline(x=cap_opt, color='#2ca02c', linestyle='--', linewidth=1.4,
+                   label=f'Óptimo recomendado ({cap_opt:,.0f} L)')
+        ax.scatter([cap_opt], [ef_opt], color='#2ca02c', s=80, marker='D', zorder=6,
+                   label=f'Cobertura óptima ({ef_opt:.1f}%)')
+
+    ax.set_xlabel('Capacidad del estanque (L)', fontsize=8, color='#151434')
+    ax.set_ylabel('Cobertura de demanda (%)', fontsize=8, color='#151434')
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'{x:,.0f}'))
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'{x:.0f}%'))
+    ax.tick_params(axis='both', labelsize=7.5, colors='#151434')
+    ax.legend(fontsize=7, loc='lower right', framealpha=0.9,
+              facecolor='#f8f3ea', edgecolor='#2e68b1')
+    ax.set_facecolor('#f8f3ea')
+    ax.grid(axis='both', color='#2e68b1', alpha=0.12)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('#2e68b1')
+    ax.spines['bottom'].set_color('#2e68b1')
+    fig.patch.set_facecolor('white')
+    plt.tight_layout(pad=0.4)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    plt.close(fig)
+
+    buf.seek(16)
+    w_px = struct.unpack('>I', buf.read(4))[0]
+    h_px = struct.unpack('>I', buf.read(4))[0]
+    h_mm = 190.0 * h_px / w_px
+
+    buf.seek(0)
+    return buf, h_mm
+
+
 def _generar_grafico_estanque_pdf(df_normal, capacidad_maxima):
     import struct
 
@@ -442,7 +491,18 @@ def generar_informe_pdf(d):
         fit_cell(37, 7, v2, style="B", size=8.5, fill=True, color=AZUL_BASE)
         y += 7
 
-    y += 5
+    # Gráfico curva óptima
+    try:
+        opt_img, opt_h_mm = _generar_grafico_curva_optima_pdf(
+            caps, efs, cap_opt, ef_act, ef_opt, d["capacidad_maxima"]
+        )
+        if y > pdf.h - pdf.b_margin - opt_h_mm - 10:
+            pdf.add_page()
+            y = 15
+        pdf.image(opt_img, x=10, y=y, w=190)
+        y += opt_h_mm + 5
+    except Exception:
+        y += 5
 
     # ── SECCIÓN: CONCLUSIONES ─────────────────────────────────
     y = sec_title("CONCLUSIONES Y RECOMENDACIONES", y)
