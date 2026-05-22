@@ -19,6 +19,13 @@ from data_loader import cargar_datos_crudos, aplicar_filtro_calidad
 from simulator import (simular_continua, simular_escenario,
                        encontrar_anios_extremos, calcular_curva_optimizacion)
 
+try:
+    from history import (guardar_simulacion, cargar_historial,
+                         cargar_simulacion_completa, eliminar_simulacion)
+    _HISTORIAL_DISPONIBLE = True
+except Exception:
+    _HISTORIAL_DISPONIBLE = False
+
 
 _MESES_ES = {1:'Ene',2:'Feb',3:'Mar',4:'Abr',5:'May',6:'Jun',
              7:'Jul',8:'Ago',9:'Sep',10:'Oct',11:'Nov',12:'Dic'}
@@ -973,13 +980,13 @@ def mostrar_detalles_escenario(df_slice, nombre, key_suffix="", curva_opt=None):
 # ===============================================================
 # TABS
 # ===============================================================
-tab1, tab2, tab3 = st.tabs([" Simulación Histórica y Escenarios", " Resumen Mensual Histórico", " Mapa de Factibilidad Nacional"])
+tab1, tab2, tab3, tab4 = st.tabs([" Simulación Histórica y Escenarios", " Resumen Mensual Histórico", " Mapa de Factibilidad Nacional", "🕓 Historial"])
 
 if 'simulacion_calculada' not in st.session_state:
     st.session_state.simulacion_calculada = False
 
 with tab1:
-    if not st.session_state.simulacion_calculada:
+    if not st.session_state.simulacion_calculada and not st.session_state.get('simulacion_desde_historial', False):
         st.info(" **¡Bienvenido al Simulador SCALL!**\n\n"
                 "1. Configura los parámetros de tu techo y consumo en la barra lateral (izquierda).\n"
                 "2. Ingresa las coordenadas exactas de tu proyecto.\n"
@@ -987,6 +994,18 @@ with tab1:
 
     if st.button("Buscar Estación y Calcular Balance", type="primary"):
         st.session_state.simulacion_calculada = True
+        st.session_state['simulacion_desde_historial'] = False
+
+    if st.session_state.get('simulacion_desde_historial', False) and 'informe_datos' in st.session_state:
+        _d = st.session_state['informe_datos']
+        st.success(f"📂 Simulación cargada desde historial: **{_d.get('nombre_proyecto', '')}**")
+        _c1, _c2, _c3 = st.columns(3)
+        _c1.metric("Estación", _d.get('est_nombre', '—'))
+        _c2.metric("Período analizado", f"{_d.get('anio_inicio', '')}–{_d.get('anio_fin', '')}")
+        _c3.metric("Años seco / normal / húmedo",
+                   f"{_d.get('anio_seco','?')} / {_d.get('anio_mediano','?')} / {_d.get('anio_lluvioso','?')}")
+        st.info("Puedes ver el **Resumen Mensual** en la pestaña 2 y descargar el **PDF** al final de la página. "
+                "Presiona el botón de arriba para recalcular con los parámetros actuales del panel lateral.")
 
     if st.session_state.simulacion_calculada:
         try:
@@ -1286,6 +1305,13 @@ with tab1:
                     'precipitaciones_promedio': promedios_m.tolist(),
                 }
 
+                if _HISTORIAL_DISPONIBLE:
+                    try:
+                        if guardar_simulacion(st.session_state['informe_datos']):
+                            st.toast("✓ Simulación guardada en historial", icon="💾")
+                    except Exception:
+                        pass
+
         except Exception as e:
             st.error(f"⚠️ **Error inesperado en el cálculo:** {e}")
 
@@ -1527,6 +1553,111 @@ with tab3:
                 "No incluye el efecto de amortiguación del estanque — zonas con lluvia concentrada "
                 "en pocos meses pueden aparecer con cobertura más baja de la real."
             )
+
+
+# ===============================================================
+# TAB 4 — HISTORIAL DE SIMULACIONES
+# ===============================================================
+with tab4:
+    st.markdown("### 🕓 Historial de Simulaciones")
+
+    if not _HISTORIAL_DISPONIBLE:
+        st.warning("⚠️ Historial no disponible. Configura las credenciales de Supabase en `.streamlit/secrets.toml`.")
+    else:
+        if st.button("🔄 Actualizar historial", key="btn_refresh_hist"):
+            st.session_state.pop('_hist_cache', None)
+
+        if '_hist_cache' not in st.session_state:
+            with st.spinner("Cargando historial..."):
+                st.session_state['_hist_cache'] = cargar_historial()
+
+        df_hist = st.session_state['_hist_cache']
+
+        if df_hist.empty:
+            st.info("Aún no hay simulaciones guardadas. Ejecuta una simulación y se guardará automáticamente.")
+        else:
+            st.write(f"**{len(df_hist)} simulación(es) guardada(s)**")
+
+            for _, row in df_hist.iterrows():
+                sim_id   = int(row['id'])
+                fecha    = row['fecha_simulacion'].strftime('%d/%m/%Y %H:%M')
+                proyecto = row.get('nombre_proyecto') or '—'
+                estacion = row.get('est_nombre') or '—'
+                pct      = row.get('pct_cubierto_normal')
+                dias     = row.get('dias_sin_agua_normal')
+                cap_opt  = row.get('cap_optima')
+
+                pct_str    = f"{pct:.1f}%" if pct is not None else "—"
+                dias_str   = str(int(dias)) if dias is not None else "—"
+                cap_str    = f"{formato_chileno(cap_opt, 0)} L" if cap_opt is not None else "—"
+
+                with st.expander(f"**{proyecto}** — {fecha} · {estacion}", expanded=False):
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Cobertura año normal", pct_str)
+                    m2.metric("Días sin agua (normal)", dias_str)
+                    m3.metric("Estanque óptimo", cap_str)
+
+                    b1, b2, b3 = st.columns(3)
+
+                    with b1:
+                        if st.button("📂 Cargar simulación", key=f"cargar_{sim_id}"):
+                            with st.spinner("Cargando desde historial..."):
+                                datos = cargar_simulacion_completa(sim_id)
+                            if datos:
+                                st.session_state['informe_datos'] = datos
+                                est_codigo = datos.get('est_codigo')
+                                lluvias_m  = datos.get('lluvias_mensuales')
+                                anio_ini   = datos.get('anio_inicio')
+                                anio_fin_  = datos.get('anio_fin')
+                                pp_prom    = datos.get('precipitaciones_promedio', [])
+                                st.session_state['resultado'] = {
+                                    'estacion_cercana':         {'Nombre': datos.get('est_nombre', '—')},
+                                    'lluvias_estacion':         lluvias_m,
+                                    'codigo_estacion':          est_codigo,
+                                    'anio_inicio':              anio_ini,
+                                    'anio_fin':                 anio_fin_,
+                                    'precipitaciones_promedio': pp_prom,
+                                }
+                                st.session_state['simulacion_desde_historial'] = True
+                                st.session_state.simulacion_calculada = False
+                                st.session_state.pop('_hist_cache', None)
+                                st.rerun()
+                            else:
+                                st.error("No se pudo cargar la simulación.")
+
+                    with b2:
+                        if st.button("📄 Generar PDF", key=f"pdf_btn_{sim_id}"):
+                            st.session_state[f'pdf_solicitado'] = sim_id
+                            st.session_state.pop(f'pdf_bytes_{sim_id}', None)
+
+                        if st.session_state.get('pdf_solicitado') == sim_id:
+                            if f'pdf_bytes_{sim_id}' not in st.session_state:
+                                with st.spinner("Generando PDF..."):
+                                    datos_pdf = cargar_simulacion_completa(sim_id)
+                                if datos_pdf:
+                                    st.session_state[f'pdf_bytes_{sim_id}'] = generar_informe_pdf(datos_pdf)
+                                    st.session_state[f'pdf_nombre_{sim_id}'] = datos_pdf.get('nombre_proyecto', 'proyecto')
+                            pdf_bytes = st.session_state.get(f'pdf_bytes_{sim_id}')
+                            if pdf_bytes:
+                                nombre_pdf = st.session_state.get(f'pdf_nombre_{sim_id}', 'proyecto').replace(' ', '_')
+                                st.download_button(
+                                    label="⬇️ Descargar PDF",
+                                    data=pdf_bytes,
+                                    file_name=f"Informe_SCALL_{nombre_pdf}.pdf",
+                                    mime="application/pdf",
+                                    key=f"dl_pdf_{sim_id}",
+                                )
+
+                    with b3:
+                        if st.button("🗑️ Eliminar", key=f"del_{sim_id}"):
+                            st.session_state[f'confirmar_eliminar_{sim_id}'] = True
+                        if st.session_state.get(f'confirmar_eliminar_{sim_id}', False):
+                            if st.button("¿Confirmar eliminación?", key=f"confirm_{sim_id}", type="primary"):
+                                eliminar_simulacion(sim_id)
+                                st.session_state.pop(f'confirmar_eliminar_{sim_id}', None)
+                                st.session_state.pop('_hist_cache', None)
+                                st.toast("Simulación eliminada", icon="🗑️")
+                                st.rerun()
 
 
 # ===============================================================
