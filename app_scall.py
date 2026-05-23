@@ -1375,6 +1375,7 @@ with tab1:
                     try:
                         if guardar_simulacion(st.session_state['informe_datos'], usuario=usuario or "Anónimo"):
                             st.toast("✓ Simulación guardada en historial", icon="💾")
+                            st.session_state.pop('_hist_cache', None)
                     except Exception:
                         pass
 
