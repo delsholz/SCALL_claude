@@ -296,6 +296,31 @@ def cargar_historial(usuario=None):
         return pd.DataFrame()
 
 
+def cargar_datos_dashboard():
+    """Retorna DataFrame con datos de TODAS las simulaciones para el dashboard."""
+    if not _supabase_disponible():
+        return pd.DataFrame()
+    try:
+        cols = (
+            'id,fecha_simulacion,usuario,nombre_proyecto,'
+            'lat_proyecto,lon_proyecto,est_nombre,'
+            'pct_cubierto_normal,cap_optima,capacidad_maxima,techo'
+        )
+        resp = requests.get(
+            _base_url(),
+            headers={**_headers(), "Prefer": ""},
+            params={'select': cols, 'order': 'fecha_simulacion.asc'},
+            timeout=15,
+        )
+        if not resp.ok or not resp.json():
+            return pd.DataFrame()
+        df = pd.DataFrame(resp.json())
+        df['fecha_simulacion'] = pd.to_datetime(df['fecha_simulacion'])
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
 def cargar_simulacion_completa(sim_id):
     """Retorna el informe_datos completo de una simulación por ID."""
     if not _supabase_disponible():
