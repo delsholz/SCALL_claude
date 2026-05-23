@@ -590,6 +590,12 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 st.sidebar.markdown("---")
+usuario = st.sidebar.text_input(
+    "👤 Tu nombre (para el historial)",
+    placeholder="Ej: Diego, María, Equipo Amulén...",
+    help="Cada persona ve solo sus propias simulaciones en el historial."
+)
+st.sidebar.markdown("---")
 st.sidebar.header("1. Datos del Proyecto")
 nombre_proyecto  = st.sidebar.text_input("Nombre del Proyecto/Lugar", "Mi Proyecto SCALL")
 techo            = st.sidebar.number_input("Superficie del Techo (m2)", min_value=10.0, value=120.0)
@@ -1367,7 +1373,7 @@ with tab1:
 
                 if _HISTORIAL_DISPONIBLE:
                     try:
-                        if guardar_simulacion(st.session_state['informe_datos']):
+                        if guardar_simulacion(st.session_state['informe_datos'], usuario=usuario or "Anónimo"):
                             st.toast("✓ Simulación guardada en historial", icon="💾")
                     except Exception:
                         pass
@@ -1623,18 +1629,21 @@ with tab4:
 
     if not _HISTORIAL_DISPONIBLE:
         st.warning("⚠️ Historial no disponible. Configura las credenciales de Supabase en `.streamlit/secrets.toml`.")
+    elif not usuario:
+        st.info("👤 Ingresa tu nombre en el panel izquierdo para ver tu historial de simulaciones.")
     else:
+        st.markdown(f"Mostrando simulaciones de **{usuario}**")
         if st.button("🔄 Actualizar historial", key="btn_refresh_hist"):
             st.session_state.pop('_hist_cache', None)
 
         if '_hist_cache' not in st.session_state:
             with st.spinner("Cargando historial..."):
-                st.session_state['_hist_cache'] = cargar_historial()
+                st.session_state['_hist_cache'] = cargar_historial(usuario=usuario)
 
         df_hist = st.session_state['_hist_cache']
 
         if df_hist.empty:
-            st.info("Aún no hay simulaciones guardadas. Ejecuta una simulación y se guardará automáticamente.")
+            st.info("Aún no tienes simulaciones guardadas. Ejecuta una simulación y se guardará automáticamente.")
         else:
             st.write(f"**{len(df_hist)} simulación(es) guardada(s)**")
 

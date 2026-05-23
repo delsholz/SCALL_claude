@@ -202,7 +202,7 @@ def _extraer_metricas(d):
 # API pública
 # ---------------------------------------------------------------------------
 
-def guardar_simulacion(informe_datos):
+def guardar_simulacion(informe_datos, usuario=None):
     """Guarda una simulación en Supabase. Retorna True si tuvo éxito."""
     if not _supabase_disponible():
         return False
@@ -213,6 +213,7 @@ def guardar_simulacion(informe_datos):
         est_alt = d.get('est_altitud')
 
         row = {
+            'usuario': usuario or 'Anónimo',
             'nombre_proyecto': d.get('nombre_proyecto'),
             'lat_proyecto': d.get('lat_proyecto'),
             'lon_proyecto': d.get('lon_proyecto'),
@@ -248,20 +249,23 @@ def guardar_simulacion(informe_datos):
         return False
 
 
-def cargar_historial():
-    """Retorna DataFrame con metadatos de simulaciones (sin blobs JSON)."""
+def cargar_historial(usuario=None):
+    """Retorna DataFrame con metadatos de simulaciones filtradas por usuario."""
     if not _supabase_disponible():
         return pd.DataFrame()
     try:
         cols = (
-            'id,fecha_simulacion,nombre_proyecto,est_nombre,est_codigo,'
+            'id,fecha_simulacion,usuario,nombre_proyecto,est_nombre,est_codigo,'
             'techo,capacidad_maxima,numero_personas,pct_cubierto_normal,'
             'dias_sin_agua_normal,cap_optima,anio_seco,anio_mediano,anio_lluvioso'
         )
+        params = {'select': cols, 'order': 'fecha_simulacion.desc'}
+        if usuario:
+            params['usuario'] = f'eq.{usuario}'
         resp = requests.get(
             _base_url(),
             headers={**_headers(), "Prefer": ""},
-            params={'select': cols, 'order': 'fecha_simulacion.desc'},
+            params=params,
             timeout=10,
         )
         if not resp.ok:
