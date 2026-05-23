@@ -1789,72 +1789,10 @@ with tab5:
         else:
             total = len(df_dash)
             usuarios_unicos = df_dash['usuario'].nunique()
-            pct_prom = df_dash['pct_cubierto_normal'].dropna().mean()
 
-            k1, k2, k3 = st.columns(3)
+            k1, k2 = st.columns(2)
             k1.metric("Total simulaciones", total)
             k2.metric("Usuarios activos", usuarios_unicos)
-            k3.metric("Cobertura promedio", f"{pct_prom:.1f}%" if not pd.isna(pct_prom) else "—")
-
-            st.markdown("---")
-
-            col_izq, col_der = st.columns(2)
-
-            # Gráfico: simulaciones por usuario
-            with col_izq:
-                st.markdown("**Simulaciones por usuario**")
-                conteo = df_dash['usuario'].value_counts().reset_index()
-                conteo.columns = ['Usuario', 'Simulaciones']
-                fig_usr = go.Figure(go.Bar(
-                    x=conteo['Simulaciones'], y=conteo['Usuario'],
-                    orientation='h',
-                    marker_color='#2e68b1',
-                ))
-                fig_usr.update_layout(
-                    height=max(200, 40 * len(conteo)),
-                    margin=dict(l=10, r=10, t=10, b=10),
-                    paper_bgcolor='white', plot_bgcolor='#f8f3ea',
-                    yaxis=dict(autorange='reversed'),
-                )
-                st.plotly_chart(fig_usr, use_container_width=True)
-
-            # Gráfico: distribución de cobertura
-            with col_der:
-                st.markdown("**Distribución de cobertura (año normal)**")
-                coberturas = df_dash['pct_cubierto_normal'].dropna()
-                if not coberturas.empty:
-                    fig_hist = go.Figure(go.Histogram(
-                        x=coberturas, nbinsx=10,
-                        marker_color='#76c2f5', marker_line_color='#2e68b1',
-                        marker_line_width=1,
-                    ))
-                    fig_hist.update_layout(
-                        height=300, margin=dict(l=10, r=10, t=10, b=10),
-                        xaxis_title='Cobertura (%)', yaxis_title='N° proyectos',
-                        paper_bgcolor='white', plot_bgcolor='#f8f3ea',
-                    )
-                    st.plotly_chart(fig_hist, use_container_width=True)
-
-            st.markdown("---")
-
-            # Línea de tiempo
-            st.markdown("**Simulaciones por día**")
-            df_tiempo = df_dash.copy()
-            df_tiempo['fecha'] = df_tiempo['fecha_simulacion'].dt.date
-            por_dia = df_tiempo.groupby('fecha').size().reset_index(name='count')
-            fig_time = go.Figure(go.Scatter(
-                x=por_dia['fecha'], y=por_dia['count'],
-                mode='lines+markers',
-                line=dict(color='#2e68b1', width=2),
-                marker=dict(color='#76c2f5', size=7),
-                fill='tozeroy', fillcolor='rgba(46,104,177,0.08)',
-            ))
-            fig_time.update_layout(
-                height=220, margin=dict(l=10, r=10, t=10, b=10),
-                xaxis_title='Fecha', yaxis_title='Simulaciones',
-                paper_bgcolor='white', plot_bgcolor='#f8f3ea',
-            )
-            st.plotly_chart(fig_time, use_container_width=True)
 
             st.markdown("---")
 
