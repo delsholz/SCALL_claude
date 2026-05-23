@@ -1062,6 +1062,7 @@ with tab1:
     if st.button("Buscar Estación y Calcular Balance", type="primary"):
         st.session_state.simulacion_calculada = True
         st.session_state['simulacion_desde_historial'] = False
+        st.session_state['_sim_guardada'] = False
 
     if st.session_state.get('simulacion_desde_historial', False) and 'informe_datos' in st.session_state:
         _d = st.session_state['informe_datos']
@@ -1372,9 +1373,10 @@ with tab1:
                     'precipitaciones_promedio': promedios_m.tolist(),
                 }
 
-                if _HISTORIAL_DISPONIBLE:
+                if _HISTORIAL_DISPONIBLE and not st.session_state.get('_sim_guardada', False):
                     try:
                         if guardar_simulacion(st.session_state['informe_datos'], usuario=usuario or "Anónimo"):
+                            st.session_state['_sim_guardada'] = True
                             st.toast("✓ Simulación guardada en historial", icon="💾")
                             st.session_state.pop('_hist_cache', None)
                     except Exception:
@@ -1654,7 +1656,32 @@ with tab4:
         if df_hist.empty:
             st.info("Aún no tienes simulaciones guardadas. Ejecuta una simulación y se guardará automáticamente.")
         else:
-            st.write(f"**{len(df_hist)} simulación(es) guardada(s)**")
+            col_titulo, col_zip = st.columns([3, 1])
+            col_titulo.write(f"**{len(df_hist)} simulación(es) guardada(s)**")
+
+            with col_zip:
+                if st.button("📦 Descargar todo (ZIP)", key="btn_zip"):
+                    import zipfile, io as _io
+                    zip_buf = _io.BytesIO()
+                    with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+                        for _, row_z in df_hist.iterrows():
+                            with st.spinner(f"Generando PDF {row_z.get('nombre_proyecto','?')}..."):
+                                datos_z = cargar_simulacion_completa(int(row_z['id']))
+                            if datos_z:
+                                try:
+                                    pdf_z = generar_informe_pdf(datos_z)
+                                    nombre_z = (row_z.get('nombre_proyecto') or 'proyecto').replace(' ', '_')
+                                    zf.writestr(f"{nombre_z}.pdf", pdf_z.read())
+                                except Exception:
+                                    pass
+                    zip_buf.seek(0)
+                    st.download_button(
+                        label="⬇️ Guardar ZIP",
+                        data=zip_buf,
+                        file_name=f"SCALL_{usuario}_informes.zip",
+                        mime="application/zip",
+                        key="btn_zip_download",
+                    )
 
             for _, row in df_hist.iterrows():
                 sim_id   = int(row['id'])
