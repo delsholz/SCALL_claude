@@ -39,7 +39,7 @@
     linkcolor=azulbase,
     urlcolor=azulbase,
     citecolor=azulbase,
-    pdftitle={Memoria Técnica App-SCALL v2.0},
+    pdftitle={Memoria Técnica App-SCALL v2.1},
     pdfauthor={Diego Elsholz}
 }
 
@@ -47,7 +47,7 @@
 \pagestyle{fancy}
 \fancyhf{}
 \fancyhead[L]{\small\color{azulbase} Memoria Técnica App-SCALL}
-\fancyhead[R]{\small\color{azulbase} Versión 2.0 --- Mayo 2026}
+\fancyhead[R]{\small\color{azulbase} Versión 2.1 --- Mayo 2026}
 \fancyfoot[C]{\small\thepage}
 \renewcommand{\headrulewidth}{0.4pt}
 \renewcommand{\headrule}{\hbox to\headwidth{\color{azulbase}\leaders\hrule height \headrulewidth\hfill}}
@@ -100,8 +100,8 @@
 
     \vfill
 
-    {\normalsize Versión 2.0\\
-    21 de mayo de 2026\par}
+    {\normalsize Versión 2.1\\
+    23 de mayo de 2026\par}
 \end{titlepage}
 
 % ================================================================
@@ -128,7 +128,8 @@ Los principales módulos del sistema son:
     \item \textbf{Selección estocástica de escenarios:} extracción de años reales seco (P5), normal (mediana $+$ SSE) y lluvioso (P95) desde 20 años de registro.
     \item \textbf{Optimización automática:} algoritmo Kneedle para identificar el ``Sweet Spot'' de capacidad del estanque.
     \item \textbf{Mapa de factibilidad nacional:} triangulación de Delaunay sobre $\sim$400 estaciones CR$^2$ con precipitación media anual interpolada.
-    \item \textbf{Generación de informes:} exportación a PDF (identidad visual Amulén) y Excel con balance diario completo.
+    \item \textbf{Generación de informes:} exportación a PDF (identidad visual Amulén, incluye gráfico de curva óptima) y Excel con balance diario completo.
+    \item \textbf{Historial persistente multi-usuario:} almacenamiento automático de simulaciones en la nube (Supabase/PostgreSQL), con gestión por nombre de usuario, recarga de simulaciones previas y descarga masiva en formato ZIP.
 \end{itemize}
 
 % ================================================================
@@ -490,7 +491,8 @@ La aplicación cuenta con un panel de control interactivo (sidebar) donde el usu
 \toprule
 \textbf{Sección} & \textbf{Parámetros} \\
 \midrule
-1. Datos del Proyecto & Nombre, superficie de techo (m$^2$), capacidad del estanque (L), eficiencia de captación (\%) \\
+Identificación & Nombre de usuario (para historial multi-usuario) \\
+1. Datos del Proyecto & Nombre del proyecto, superficie de techo (m$^2$), capacidad del estanque (L), eficiencia de captación (\%) \\
 Consumo & Número de personas, litros/persona/día, tipo de uso (escuela/residencia), meses de operación, inclusión de fines de semana \\
 2. Calidad de Datos & Umbral mínimo de registros válidos (\%) \\
 3. Coordenadas & Latitud/longitud manual \textit{o} link de Google Maps; altitud manual o automática (API) \\
@@ -501,12 +503,14 @@ Gradiente Orográfico & Porcentaje de variación de lluvia por 100 m de desnivel
 
 \subsection{Pestañas de resultados}
 
-Los resultados se organizan en tres pestañas principales:
+Los resultados se organizan en cinco pestañas:
 
 \begin{enumerate}
     \item \textbf{Simulación Histórica y Escenarios:} serie continua 2000--2020 con Plotly interactivo, curvas de nivel del estanque para los tres escenarios, curvas de optimización de capacidad, y tablas diarias exportables a Excel.
     \item \textbf{Resumen Mensual Histórico:} climograma de precipitación mensual promedio de la estación seleccionada.
     \item \textbf{Mapa de Factibilidad Nacional:} mapa interactivo con triangulación de Delaunay (sub-pestañas: precipitación media y cobertura estimada).
+    \item \textbf{Historial:} listado de simulaciones guardadas del usuario activo, con opciones de recarga, descarga de PDF individual y descarga masiva en ZIP (ver Sección~\ref{sec:historial}).
+    \item \textbf{Dashboard:} panel de estadísticas agregadas de uso de la plataforma (total de simulaciones, usuarios activos, mapa de proyectos).
 \end{enumerate}
 
 \subsection{Exportación de datos}
@@ -544,7 +548,8 @@ App-SCALL genera un informe PDF profesional utilizando la librería \texttt{fpdf
     \item \textbf{Estación meteorológica:} nombre, código, altitud, distancia efectiva y calidad de datos.
     \item \textbf{Resultados por escenario:} tabla comparativa (año seco / normal / lluvioso) con lluvia total, volumen captado, demanda, cobertura (\%) y días sin agua.
     \item \textbf{Gráfico de nivel del estanque:} serie diaria del año normal generada con Matplotlib, embebida como PNG.
-    \item \textbf{Curva de optimización:} capacidad óptima recomendada y eficiencia alcanzable.
+    \item \textbf{Gráfico de curva óptima del estanque:} curva cobertura vs.\ capacidad generada con Matplotlib, que incluye marcadores del estanque actual (línea naranja) y el punto óptimo recomendado (marcador verde), embebida como PNG inmediatamente después de la tabla de KPIs.
+    \item \textbf{Tamaño óptimo recomendado:} tabla de KPIs con estanque ingresado, tamaño óptimo, cobertura actual y cobertura óptima.
     \item \textbf{Conclusiones y veredicto:} texto automático con clasificación de viabilidad:
     \begin{itemize}
         \item \textbf{VIABLE} si cobertura en año normal $\geq 60\%$
@@ -553,6 +558,71 @@ App-SCALL genera un informe PDF profesional utilizando la librería \texttt{fpdf
     \end{itemize}
     \item \textbf{Pie de página automático:} aparece en todas las páginas con texto institucional y logo Amulén.
 \end{enumerate}
+
+% ================================================================
+\section{Historial de Simulaciones y Persistencia de Datos}
+\label{sec:historial}
+% ================================================================
+
+A partir de la versión 2.1, App-SCALL implementa un sistema de persistencia de simulaciones en la nube mediante \textbf{Supabase} (PostgreSQL gestionado), lo que permite a múltiples usuarios acceder, recuperar y comparar simulaciones pasadas desde cualquier dispositivo.
+
+\subsection{Arquitectura de persistencia}
+
+El módulo \texttt{history.py} gestiona toda la comunicación con Supabase usando la \textbf{API REST} directamente mediante \texttt{requests}, evitando la dependencia del cliente oficial \texttt{supabase-py} (incompatible con Python 3.14 por requerir compilación de extensiones C++). Las credenciales se leen en orden de prioridad:
+
+\begin{enumerate}
+    \item \texttt{.streamlit/secrets.toml} $\rightarrow$ sección \texttt{[supabase]} con \texttt{url} y \texttt{key}.
+    \item Variables de entorno \texttt{SUPABASE\_URL} / \texttt{SUPABASE\_KEY} (útil para despliegues en CI/CD).
+\end{enumerate}
+
+El archivo \texttt{secrets.toml} está excluido del repositorio mediante \texttt{.gitignore}; en producción las credenciales se gestionan desde la interfaz de Streamlit Community Cloud.
+
+\subsection{Esquema de la base de datos}
+
+La tabla \texttt{simulaciones} en Supabase almacena tanto metadatos escalares (para consultas rápidas) como el informe completo serializado en formato \texttt{jsonb}:
+
+\begin{center}
+\begin{tabular}{llp{7cm}}
+\toprule
+\textbf{Columna} & \textbf{Tipo} & \textbf{Descripción} \\
+\midrule
+\texttt{id} & \texttt{bigint} & Clave primaria autoincremental \\
+\texttt{fecha\_simulacion} & \texttt{timestamptz} & Timestamp UTC automático \\
+\texttt{usuario} & \texttt{text} & Nombre ingresado por el usuario \\
+\texttt{nombre\_proyecto} & \texttt{text} & Identificador del proyecto \\
+\texttt{pct\_cubierto\_normal} & \texttt{float8} & Cobertura en año normal (\%) \\
+\texttt{dias\_sin\_agua\_normal} & \texttt{integer} & Días de déficit en año normal \\
+\texttt{cap\_optima} & \texttt{float8} & Capacidad óptima recomendada (L) \\
+\texttt{informe\_datos\_json} & \texttt{jsonb} & Informe completo: DataFrames diarios, curvas, metadatos \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Serialización de datos}
+
+Los objetos Python no serializables directamente a JSON se convierten mediante dos mecanismos:
+
+\begin{itemize}
+    \item \textbf{DataFrames Pandas:} \texttt{df.to\_json(orient=`records', date\_format=`iso')} produce una cadena JSON embebida en el campo \texttt{jsonb}.
+    \item \textbf{Tipos NumPy} (\texttt{numpy.float64}, \texttt{numpy.int64}): se convierten a tipos Python nativos mediante una función \texttt{\_json\_default(obj)} pasada como argumento \texttt{default} a \texttt{json.dumps()}.
+    \item \textbf{Tuplas de curvas:} la tupla \texttt{(capacidades, eficiencias, cap\_opt, ef\_act, ef\_opt)} se serializa como diccionario con listas Python nativas.
+\end{itemize}
+
+\subsection{Gestión multi-usuario}
+
+Cada usuario ingresa su nombre en el sidebar antes de simular. Este nombre se almacena en el campo \texttt{usuario} de cada registro y se usa como filtro en la consulta de historial (\texttt{?usuario=eq.\{nombre\}}), garantizando que cada persona vea únicamente sus propias simulaciones.
+
+Si no se ingresa nombre, la simulación se guarda bajo el alias ``Anónimo''. Para evitar re-guardados espurios ante cada interacción con la interfaz, se emplea la bandera de sesión \texttt{\_sim\_guardada} que se activa tras el primer guardado exitoso y se resetea solo cuando el usuario presiona el botón de cálculo.
+
+\subsection{Funcionalidades del historial}
+
+\begin{itemize}
+    \item \textbf{Autoguardado:} cada simulación ejecutada se persiste automáticamente sin acción del usuario.
+    \item \textbf{Recarga:} al cargar una simulación previa, el sistema reconstituye el estado completo de la sesión (\texttt{informe\_datos}, \texttt{resultado}) y muestra un banner informativo en Tab~1.
+    \item \textbf{PDF individual:} generación y descarga del informe PDF de cualquier simulación del historial.
+    \item \textbf{Descarga ZIP masiva:} botón ``Descargar todo (ZIP)'' que genera todos los PDFs del usuario y los comprime en un archivo \texttt{SCALL\_\{usuario\}\_informes.zip}, con cada archivo nombrado según el proyecto correspondiente.
+    \item \textbf{Eliminación:} con confirmación de dos pasos para evitar borrados accidentales.
+\end{itemize}
 
 % ================================================================
 \section{Análisis de Seguridad y Autonomía Hídrica}
@@ -589,11 +659,14 @@ Adicionalmente, para cada escenario climático el sistema reporta:
 \toprule
 \textbf{Archivo} & \textbf{Rol} \\
 \midrule
-\texttt{app\_scall.py} & Aplicación principal Streamlit: UI, visualizaciones Plotly, generación de PDF e informe Excel \\
+\texttt{app\_scall.py} & Aplicación principal Streamlit: UI, visualizaciones Plotly, generación de PDF e informe Excel, tabs Historial y Dashboard \\
 \texttt{simulator.py} & Motor de simulación: balance diario YAS, selección de años extremos (P5/P95/SSE), curva de optimización Kneedle \\
 \texttt{data\_loader.py} & Carga y filtrado de datos CR$^2$, control de calidad por estación, caché Streamlit \\
 \texttt{utils.py} & Helpers: formato chileno de números, distancia Haversine vectorizada, corrección de coordenadas \\
+\texttt{history.py} & Historial de simulaciones: persistencia en Supabase vía REST API, serialización/deserialización JSON, gestión multi-usuario \\
 \texttt{requirements.txt} & Dependencias del proyecto \\
+\texttt{.streamlit/secrets.toml} & Credenciales Supabase (excluido del repositorio vía \texttt{.gitignore}) \\
+\texttt{.env.example} & Plantilla de variables de entorno para despliegues alternativos \\
 \texttt{fonts/} & Tipografía Poppins (Regular, Bold, Italic, BoldItalic) en formato TTF \\
 \texttt{data/cr2\_prDaily\_2020.txt.gz} & Dataset principal: precipitación diaria por estación (5,3 MB comprimido) \\
 \bottomrule
@@ -616,7 +689,8 @@ Adicionalmente, para cada escenario climático el sistema reporta:
 \texttt{fpdf2} & Generación de informes PDF \\
 \texttt{Pillow} & Upscaling del logo (Lanczos) para alta resolución en PDF \\
 \texttt{xlsxwriter} & Exportación de balances diarios a Excel \\
-\texttt{requests} & Consultas a APIs externas (altitud, coordenadas) \\
+\texttt{requests} & Consultas a APIs externas (altitud, coordenadas) y Supabase REST API \\
+\texttt{Supabase} & Base de datos PostgreSQL en la nube para historial de simulaciones \\
 \bottomrule
 \end{tabular}
 \end{center}
