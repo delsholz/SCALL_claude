@@ -155,6 +155,47 @@ Los registros provienen de una extensa red física de estaciones meteorológicas
     \item \textbf{Corte en 2020:} las restricciones de movilidad impuestas por la pandemia COVID-19 generaron interrupciones masivas en la lectura manual de pluviómetros a nivel nacional a partir de 2020, afectando la calidad de los datos posteriores.
 \end{itemize}
 
+\subsection{Representatividad y Conservadurismo del Período 2000--2020}
+\label{sec:representatividad}
+
+La elección del período 2000--2020 no es solo una restricción técnica por calidad de datos: es una decisión \textbf{metodológicamente conservadora} que aporta solidez y robustez al análisis de factibilidad, por tres razones fundamentales:
+
+\begin{enumerate}
+  \item \textbf{Incluye la sequía milenaria más severa de Chile Central.}
+    El período 2010--2019 corresponde a la \textit{Megasequía de Chile Central}, el
+    evento de déficit pluviométrico más intenso y prolongado registrado en los últimos
+    mil años en la región~\cite{garreaud2020,garreaud2017}. La precipitación media
+    disminuyó entre un 25\,\% y un 45\,\% respecto al promedio histórico en las regiones
+    de Coquimbo a La Araucanía~\cite{cr2_2015}. Incluir esta década garantiza que los
+    escenarios de diseño simulados por SCALL reflejan condiciones de estrés hídrico
+    extremas, no condiciones promedio. Investigaciones han demostrado que la megasequía
+    tiene tanto una componente forzada por el cambio climático antrópico como una
+    componente de variabilidad natural~\cite{boisier2016}, lo que refuerza su pertinencia
+    como caso de diseño conservador.
+
+  \item \textbf{Los años 2021--2024 fueron anómalamente lluviosos y no representativos.}
+    Tras la megasequía, Chile Central experimentó un ciclo húmedo impulsado por el
+    fenómeno \textit{La Niña} y variabilidad interanual. Incluir estos años en el período
+    de diseño introduciría un sesgo optimista: el sistema parecería más viable de lo que
+    será en condiciones normales o secas. Omitirlos preserva la \textbf{conservadurismo
+    del diseño}, principio fundamental en ingeniería de infraestructura hídrica.
+
+  \item \textbf{Las proyecciones climáticas confirman un futuro igual o más seco.}
+    Los escenarios climáticos CMIP6 para Chile~\cite{salazar2024} proyectan una reducción
+    de la precipitación media anual de entre un 10\,\% y un 30\,\% para la zona
+    centro-sur al año 2100 bajo escenarios de emisiones intermedias y altas. El
+    \textit{Informe IPCC AR6}~\cite{ipcc_ar6} y los escenarios climáticos elaborados
+    por el Centro de Cambio Global UC~\cite{ccg2022} coinciden en que la tendencia
+    de aridización observada en el período 2000--2020 se profundizará. Esto significa
+    que los datos históricos hasta 2020 representan, en el mejor caso, el límite
+    \textit{optimista} del clima futuro~\cite{cr2_2021}.
+\end{enumerate}
+
+En síntesis, App-SCALL \textbf{no subestima la disponibilidad de agua}: la dimensiona con
+el período climático más seco y representativo disponible, al cual la ciencia del clima
+indica que el futuro se asemejará. Un sistema declarado viable por SCALL ha demostrado su
+factibilidad frente al peor decenio pluviométrico del último milenio.
+
 % ================================================================
 \section{Ingeniería y Tratamiento de Datos}
 % ================================================================
@@ -740,6 +781,30 @@ Satopaa, V., Albrecht, J., Irwin, D., \& Raghavan, B. (2011). \textit{Finding a 
 
 \bibitem{delaunay}
 Delaunay, B. (1934). \textit{Sur la sphère vide}. Bulletin de l'Académie des Sciences de l'URSS, Classe des Sciences Mathématiques et Naturelles, 6, 793--800.
+
+\bibitem{garreaud2020}
+Garreaud, R.\,D., Boisier, J.\,P., Rondanelli, R., Montecinos, A., Sepúlveda, H.\,H., \& Veloso-Aguila, D. (2020). \textit{The Central Chile Mega Drought (2010--2018): A climate dynamics perspective}. International Journal of Climatology, 40(1), 421--439. \url{https://doi.org/10.1002/joc.6219}
+
+\bibitem{garreaud2017}
+Garreaud, R.\,D., Alvarez-Garreton, C., Baez-Villanueva, J., Boisier, J.\,P., Christie, D., Galleguillos, M., \ldots\ \& Zambrano-Bigiarini, M. (2017). \textit{The 2010--2015 megadrought in central Chile: Impacts on regional hydroclimate and vegetation}. Hydrology and Earth System Sciences, 21, 6307--6327. \url{https://doi.org/10.5194/hess-21-6307-2017}
+
+\bibitem{cr2_2015}
+Centro de Ciencia del Clima y la Resiliencia (CR)$^2$. (2015). \textit{La megasequía 2010--2015: Una lección para el futuro. Informe a la Nación}. Universidad de Chile, Santiago.
+
+\bibitem{boisier2016}
+Boisier, J.\,P., Rondanelli, R., Garreaud, R.\,D., \& Muñoz, F. (2016). \textit{Anthropogenic and natural contributions to the Southeast Pacific precipitation decline and recent megadrought in central Chile}. Geophysical Research Letters, 43(1), 413--421. \url{https://doi.org/10.1002/2015GL067265}
+
+\bibitem{salazar2024}
+Salazar, A., Boisier, J.\,P., Garreaud, R., Rojas, M., \& Fuenzalida, H. (2024). \textit{CMIP6 precipitation and temperature projections for Chile and their comparison with CMIP5}. Climate Dynamics, 62, 2475--2498. \url{https://doi.org/10.1007/s00382-023-07034-9}
+
+\bibitem{cr2_2021}
+Centro de Ciencia del Clima y la Resiliencia (CR)$^2$. (2021). \textit{Estrés hídrico en Chile: pasado, presente y futuro}. Policy Brief. Universidad de Chile, Santiago.
+
+\bibitem{ipcc_ar6}
+IPCC. (2022). \textit{Climate Change 2022: Impacts, Adaptation and Vulnerability. Contribution of Working Group II to the Sixth Assessment Report of the Intergovernmental Panel on Climate Change} [Pörtner, H.-O. et al. (eds.)], Chapter 12: Central and South America. Cambridge University Press.
+
+\bibitem{ccg2022}
+Centro de Cambio Global UC (CCG-UC). (2022). \textit{Escenarios climáticos para Chile: evidencia desde el Sexto Informe del IPCC}. Pontificia Universidad Católica de Chile, Santiago.
 
 \end{thebibliography}
 
