@@ -1047,7 +1047,7 @@ def mostrar_detalles_escenario(df_slice, nombre, key_suffix="", curva_opt=None):
 # ===============================================================
 # TABS
 # ===============================================================
-tab1, tab2, tab3, tab4, tab5 = st.tabs([" Simulación Histórica y Escenarios", " Resumen Mensual Histórico", " Mapa de Factibilidad Nacional", "🕓 Historial", "📊 Dashboard"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs([" Simulación Histórica y Escenarios", " Resumen Mensual Histórico", " Mapa de Factibilidad Nacional", "Historial", "Dashboard"])
 
 if 'simulacion_calculada' not in st.session_state:
     st.session_state.simulacion_calculada = False
