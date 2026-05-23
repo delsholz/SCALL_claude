@@ -1634,8 +1634,15 @@ with tab4:
         st.info("👤 Ingresa tu nombre en el panel izquierdo para ver tu historial de simulaciones.")
     else:
         st.markdown(f"Mostrando simulaciones de **{usuario}**")
+
+        # Limpiar cache si el usuario cambió de nombre
+        if st.session_state.get('_hist_usuario') != usuario:
+            st.session_state.pop('_hist_cache', None)
+            st.session_state['_hist_usuario'] = usuario
+
         if st.button("🔄 Actualizar historial", key="btn_refresh_hist"):
             st.session_state.pop('_hist_cache', None)
+            st.rerun()
 
         if '_hist_cache' not in st.session_state:
             with st.spinner("Cargando historial..."):
