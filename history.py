@@ -238,15 +238,31 @@ def guardar_simulacion(informe_datos, usuario=None):
             'informe_datos_json': serial,
         }
 
+        payload = json.dumps(row, ensure_ascii=False, default=_json_default)
         resp = requests.post(
             _base_url(),
             headers=_headers(),
-            data=json.dumps(row, ensure_ascii=False),
+            data=payload,
             timeout=15,
         )
-        return resp.status_code in (200, 201)
-    except Exception:
+        if resp.status_code not in (200, 201):
+            import streamlit as _st
+            _st.error(f"Supabase error {resp.status_code}: {resp.text[:300]}")
+            return False
+        return True
+    except Exception as _e:
+        import streamlit as _st
+        _st.error(f"Error al guardar simulación: {_e}")
         return False
+
+
+def _json_default(obj):
+    """Convierte tipos numpy/pandas a tipos Python nativos para json.dumps."""
+    if hasattr(obj, 'item'):
+        return obj.item()
+    if hasattr(obj, 'tolist'):
+        return obj.tolist()
+    raise TypeError(f"No serializable: {type(obj)}")
 
 
 def cargar_historial(usuario=None):
