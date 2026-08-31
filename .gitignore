@@ -30,3 +30,16 @@ docs/*.toc
 # Informes generados (output, no codigo) — viven aparte del repo
 informes_apa_2026/
 Informe_Consolidado_*.pdf
+
+# ─── Pipeline de informes APA — NO va al repo publico ─────────────────────────
+# Este repo contiene solo el simulador. Los scripts de lote y los datos de
+# escuelas (nombres, coordenadas, veredictos) viven en local / OneDrive.
+batch_scall.py
+generar_bd_mapa.py
+generar_consolidado.py
+run_*.py
+escuelas_*.csv
+escuelas_*.geojson
+
+# Config local de Claude Code (rutas de esta maquina)
+.claude/
