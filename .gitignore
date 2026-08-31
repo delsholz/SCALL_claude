@@ -19,6 +19,14 @@ desktop.ini
 
 # LaTeX build artifacts
 docs/_build/
+docs/*.aux
+docs/*.log
+docs/*.out
+docs/*.toc
 
 # Carpeta antigua con emoji (reemplazada por assets/)
 🖼️ Assets/
+
+# Informes generados (output, no codigo) — viven aparte del repo
+informes_apa_2026/
+Informe_Consolidado_*.pdf

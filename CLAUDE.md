@@ -32,19 +32,21 @@ app_scall.py    (UI Streamlit, gráficos Plotly, generación PDF)
 - `aplicar_filtro_calidad(umbral_calidad, anio_inicio, anio_fin)` — filtra estaciones según % de meses válidos. Los parámetros de año son la clave de caché; cambiarlos invalida automáticamente el caché de Streamlit.
 
 **`simulator.py`**
-- `simular_continua(...)` — simula el balance diario del estanque para todo el período histórico usando `itertools.accumulate`.
-- `encontrar_anios_extremos(df_sim_completa, codigo_estacion)` — identifica año seco (P5), normal (mediana) y lluvioso (P95) sobre años con ≥300 días de datos.
+- `simular_continua(...)` — simula el balance diario del estanque para todo el período histórico usando `itertools.accumulate`. Los días sin medición se simulan como 0 mm de lluvia (sesgo conservador, limitación conocida); la columna `Dato_Valido` preserva qué días tenían dato real.
+- `encontrar_anios_extremos(df_sim_completa)` — identifica año seco (P5), normal (mediana) y lluvioso (P95) sobre años con ≥300 días **con dato real** (`Dato_Valido`), para que un año con huecos de medición no se confunda con un año seco.
 - `simular_escenario(df_sim_completa, anio_sim, ...)` — re-simula un año específico desde estanque vacío (nivel=0). Retorna DataFrame diario con columnas: Lluvia, Captado, Demanda, Estanque Final, Rebalse, Déficit Diario, Agua Acumulada Teórica.
 - `calcular_curva_optimizacion(df_slice, capacidad_maxima)` — prueba capacidades de 1.000 en 1.000 L hasta `max(30.000, capacidad×2)`. **Vectorizado con NumPy**: simula todas las capacidades en paralelo en cada día (no doble bucle Python). Se llama 3 veces por simulación (una por tab de escenario).
 
 **`utils.py`**
 - `formato_chileno(valor, decimales)` — formatea números con punto como separador de miles y coma como decimal.
-- `calcular_distancia_vectorizada(...)` — distancia efectiva estación-proyecto con corrección altitudinal: `sqrt(d_horiz² + (k × Δh_km)²)`. El coeficiente `k` es ajustable por el usuario.
+- `calcular_distancia_vectorizada(...)` — distancia efectiva estación-proyecto con corrección altitudinal: `sqrt(d_horiz² + (k × Δh_km)²)`. El coeficiente `k` está fijo en el código (5 en la app, 2 en `batch_scall.py`); no se expone al usuario.
 - `arreglar_coordenada(val, es_longitud)` — parsea coordenadas mal formateadas del archivo CR².
 
 **`app_scall.py`**
 - Todo el estado de sesión vive en `st.session_state`: `simulacion_calculada`, `resultado`, `informe_datos`, `alt_auto`.
 - La simulación completa se ejecuta dentro del bloque `if st.button(...)` y guarda resultados en `st.session_state` para que Tab 2 y el PDF los consuman sin re-calcular.
+- El PDF final se cachea en `st.session_state['_pdf_cache']` (bytes) y se invalida al recalcular o al cargar otra simulación del historial — no regenerarlo en cada rerun.
+- El mapa nacional (Tab 3) está gateado tras el botón "Generar mapa nacional" (`_mapa_nacional_activo` en session_state) porque los tabs de Streamlit no son lazy y la triangulación de Delaunay es pesada.
 - `generar_informe_pdf(d)` usa fpdf2 para construir un PDF de una página en memoria (`io.BytesIO`), incluye logo `Logo_Amulen.png` si existe.
 - `mostrar_detalles_escenario(df_slice, nombre, key_suffix)` es la función de visualización principal: KPIs, gráfico de nivel, curva de optimización, seguridad hídrica, tabla diaria y botón de exportación Excel.
 

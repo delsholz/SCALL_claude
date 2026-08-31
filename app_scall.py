@@ -27,6 +27,8 @@ try:
 except Exception:
     _HISTORIAL_DISPONIBLE = False
 
+st.set_page_config(page_title="Simulador SCALL", page_icon="💧", layout="wide")
+
 
 _MESES_ES = {1:'Ene',2:'Feb',3:'Mar',4:'Abr',5:'May',6:'Jun',
              7:'Jul',8:'Ago',9:'Sep',10:'Oct',11:'Nov',12:'Dic'}
@@ -129,7 +131,7 @@ def _generar_grafico_estanque_pdf(df_normal, capacidad_maxima):
     return buf, h_mm
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data
 def _calcular_pp_media_nacional():
     """Precipitación anual media (mm/año) por estación CR2, solo años con ≥300 días válidos."""
     df_est, df_diario, _, codigos = cargar_datos_crudos()
@@ -149,7 +151,7 @@ def _calcular_pp_media_nacional():
     return df_est_ok.dropna(subset=['PP_media', 'Latitud', 'Longitud'])
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data
 def _triangular_delaunay():
     """
     Triangulación de Delaunay sobre las estaciones CR2.
@@ -580,16 +582,21 @@ span[data-baseweb="tag"] svg {
 # ===============================================================
 # SIDEBAR
 # ===============================================================
-st.sidebar.markdown(
-    """
-    <div style="background-color:#151434; border-radius:8px; padding:16px 12px 12px 12px; margin-bottom:12px;">
-        <img src="data:image/png;base64,{logo_b64}" style="width:100%;">
-    </div>
-    """.replace("{logo_b64}", __import__('base64').b64encode(
-        open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "Logo_Amulen_blanco.png"), "rb").read()
-    ).decode()),
-    unsafe_allow_html=True,
-)
+try:
+    import base64
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "assets", "Logo_Amulen_blanco.png"), "rb") as _f_logo:
+        _logo_b64 = base64.b64encode(_f_logo.read()).decode()
+    st.sidebar.markdown(
+        f"""
+        <div style="background-color:#151434; border-radius:8px; padding:16px 12px 12px 12px; margin-bottom:12px;">
+            <img src="data:image/png;base64,{_logo_b64}" style="width:100%;">
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+except Exception:
+    st.sidebar.title("💧 SCALL — Fundación Amulén")
 st.sidebar.markdown("---")
 usuario = st.sidebar.text_input(
     "👤 Tu nombre (para el historial)",
@@ -828,7 +835,8 @@ def mostrar_detalles_escenario(df_slice, nombre, key_suffix="", curva_opt=None):
     col_opt1.metric(
         " Tamaño Óptimo del Estanque",
         f"{formato_chileno(cap_optima, 0)} L",
-        help="Punto donde la curva empieza a estabilizarse (ganancia marginal < 1%/1000L) o alcanza 95%."
+        help="Primera capacidad que alcanza el 95% de cobertura o, si no se llega a 95%, "
+             "el codo de la curva (método Kneedle) donde la ganancia marginal se estabiliza."
     )
     col_opt2.metric(
         " Cobertura con Tu Estanque",
@@ -945,7 +953,7 @@ def mostrar_detalles_escenario(df_slice, nombre, key_suffix="", curva_opt=None):
         st.markdown(f"""
         <div style="margin-top: 15px;">
             <div style="font-weight: bold; font-size: 14.5px; margin-bottom: 6px;
-                        color: #d4f7ff; letter-spacing: 0.5px;">
+                        color: #3498db; letter-spacing: 0.5px;">
                 El estanque cubrió el {formato_chileno(pct_cubierto, 1)}% de la necesidad
             </div>
             <div style="background-color: rgba(255,255,255,0.08); border-radius: 8px;
@@ -982,7 +990,8 @@ def mostrar_detalles_escenario(df_slice, nombre, key_suffix="", curva_opt=None):
     p_optimo      = (dias_optimos  / total_dias) * 100
 
     color_gris   = "#95a5a6"
-    color_cielo  = "#a5e4ff"
+    color_cielo  = "#a5e4ff"   # segmento de la barra (fondo)
+    color_cielo_txt = "#2596cf"  # texto legible en tema claro y oscuro
     color_oscuro = "#2e68b1"
 
     c1, c2, c3 = st.columns(3)
@@ -991,9 +1000,9 @@ def mostrar_detalles_escenario(df_slice, nombre, key_suffix="", curva_opt=None):
         st.markdown(f"<p style='color:{color_gris}; font-weight:bold; margin-bottom:0;'>Crítico (<10%)</p>", unsafe_allow_html=True)
         st.markdown(f"<p style='color:{color_gris}; font-size:0.8rem;'>Reserva mínima: {dias_criticos} días.</p>", unsafe_allow_html=True)
     with c2:
-        st.markdown(f"<h3 style='color:{color_cielo}; margin-bottom:0;'> {formato_chileno(p_medio, 1)}%</h3>", unsafe_allow_html=True)
-        st.markdown(f"<p style='color:{color_cielo}; font-weight:bold; margin-bottom:0;'>Estado Operativo</p>", unsafe_allow_html=True)
-        st.markdown(f"<p style='color:{color_cielo}; font-size:0.8rem;'>Nivel funcional: {dias_medios} días.</p>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{color_cielo_txt}; margin-bottom:0;'> {formato_chileno(p_medio, 1)}%</h3>", unsafe_allow_html=True)
+        st.markdown(f"<p style='color:{color_cielo_txt}; font-weight:bold; margin-bottom:0;'>Estado Operativo</p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='color:{color_cielo_txt}; font-size:0.8rem;'>Nivel funcional: {dias_medios} días.</p>", unsafe_allow_html=True)
     with c3:
         st.markdown(f"<h3 style='color:{color_oscuro}; margin-bottom:0;'> {formato_chileno(p_optimo, 1)}%</h3>", unsafe_allow_html=True)
         st.markdown(f"<p style='color:{color_oscuro}; font-weight:bold; margin-bottom:0;'>Seguridad (>80%)</p>", unsafe_allow_html=True)
@@ -1009,7 +1018,7 @@ def mostrar_detalles_escenario(df_slice, nombre, key_suffix="", curva_opt=None):
         <div style="width: {p_optimo}%; background-color: {color_oscuro};"></div>
     </div>
     <div style="display: flex; width: 100%; font-size: 11px; font-weight: bold;
-                color: {color_cielo}; padding-top: 8px;">
+                color: {color_cielo_txt}; padding-top: 8px;">
         <div style="width: {p_critico}%;"></div>
         <div style="width: {p_medio}%; text-align: center; letter-spacing: 1px;">ESTADO OPERATIVO</div>
         <div style="width: {p_optimo}%;"></div>
@@ -1212,7 +1221,7 @@ with tab1:
                     df_diario, codigo_estacion, anio_inicio, anio_fin,
                     meses_num_seleccionados, consumo_fines_semana,
                     numero_personas, litros_persona_dia, capacidad_maxima,
-                    techo, eficiencia, multiplicador_lluvia  # <--- AGREGA ESTO AQUÍ
+                    techo, eficiencia, multiplicador_lluvia
                 )
 
                 anio_seco, anio_mediano, anio_lluvioso, totales_por_anio = encontrar_anios_extremos(
@@ -1264,7 +1273,7 @@ with tab1:
                     capacidad_maxima=capacidad_maxima,
                     techo=techo,
                     eficiencia=eficiencia,
-                    multiplicador_lluvia=multiplicador_lluvia  # <--- Y ESTO AQUÍ
+                    multiplicador_lluvia=multiplicador_lluvia
                 )
 
                 df_seco     = simular_escenario(df_sim_completa, anio_seco,     **sim_params)
@@ -1372,6 +1381,7 @@ with tab1:
                     'lluvias_mensuales':      lluvias_mensuales,
                     'precipitaciones_promedio': promedios_m.tolist(),
                 }
+                st.session_state.pop('_pdf_cache', None)
 
                 if _HISTORIAL_DISPONIBLE and not st.session_state.get('_sim_guardada', False):
                     try:
@@ -1389,10 +1399,14 @@ with tab1:
 # TAB 2 — RESUMEN PRECIPITACIONES
 # ===============================================================
 with tab2:
-    if 'resultado' not in st.session_state:
+    _r2 = st.session_state.get('resultado')
+    if _r2 is None:
         st.info("<-- Primero presiona **Buscar Estación y Calcular Balance** en la primera pestaña.")
+    elif _r2.get('lluvias_estacion') is None:
+        st.info("Esta simulación cargada del historial no incluye el detalle mensual histórico. "
+                "Presiona **Buscar Estación y Calcular Balance** en la pestaña 1 para regenerarlo.")
     else:
-        r = st.session_state['resultado']
+        r = _r2
         estacion_cercana         = r['estacion_cercana']
         lluvias_estacion         = r['lluvias_estacion']
         codigo_estacion          = r['codigo_estacion']
@@ -1469,132 +1483,75 @@ with tab3:
         "Cada triángulo representa la zona entre estaciones reales con el valor interpolado de su área."
     )
 
-    with st.spinner("Construyendo triangulación de Delaunay..."):
-        _geojson_tri, _vals_tri, df_mapa_nac = _triangular_delaunay()
+    if not st.session_state.get('_mapa_nacional_activo', False):
+        if st.button("🗺️ Generar mapa nacional", type="primary", key="btn_mapa_nac"):
+            st.session_state['_mapa_nacional_activo'] = True
+            st.rerun()
+        st.caption("El mapa procesa las ~400 estaciones CR2 (2000-2020); tarda unos segundos "
+                   "solo la primera vez por sesión.")
+    else:
+        with st.spinner("Construyendo triangulación de Delaunay..."):
+            _geojson_tri, _vals_tri, df_mapa_nac = _triangular_delaunay()
 
-    _ids_tri = [str(i) for i in range(len(_vals_tri))]
+        _ids_tri = [str(i) for i in range(len(_vals_tri))]
 
-    # Colorscale precipitación: blanco → celeste → azul base → azul oscuro Amulén
-    CS_PP = [
-        [0.00, "#f0f8ff"],   # casi blanco (zonas muy secas)
-        [0.15, "#cce9fa"],   # azul muy claro
-        [0.35, "#76c2f5"],   # celeste Amulén
-        [0.65, "#2e68b1"],   # azul base Amulén
-        [1.00, "#151434"],   # azul oscuro Amulén
-    ]
+        # Colorscale precipitación: blanco → celeste → azul base → azul oscuro Amulén
+        CS_PP = [
+            [0.00, "#f0f8ff"],   # casi blanco (zonas muy secas)
+            [0.15, "#cce9fa"],   # azul muy claro
+            [0.35, "#76c2f5"],   # celeste Amulén
+            [0.65, "#2e68b1"],   # azul base Amulén
+            [1.00, "#151434"],   # azul oscuro Amulén
+        ]
 
-    # Colorscale semáforo para cobertura (rojo → verde)
-    CS_COBERTURA = [
-        [0.00, "#d73027"],
-        [0.25, "#f46d43"],
-        [0.50, "#fee08b"],
-        [0.75, "#66bd63"],
-        [1.00, "#1a9850"],
-    ]
+        # Colorscale semáforo para cobertura (rojo → verde)
+        CS_COBERTURA = [
+            [0.00, "#d73027"],
+            [0.25, "#f46d43"],
+            [0.50, "#fee08b"],
+            [0.75, "#66bd63"],
+            [1.00, "#1a9850"],
+        ]
 
-    LAYOUT_MAPA = dict(
-        mapbox=dict(style='open-street-map', center=dict(lat=-37.0, lon=-71.5), zoom=4),
-        margin=dict(l=0, r=0, t=0, b=0), height=680,
-        legend=dict(
-            yanchor="top", y=0.99, xanchor="left", x=0.01,
-            bgcolor="rgba(255,255,255,0.88)", bordercolor="#cccccc",
-            borderwidth=1, font=dict(size=11),
-        ),
-    )
-
-    hover_est = (
-        "<b>" + df_mapa_nac['Nombre'] + "</b><br>"
-        + "PP media: " + df_mapa_nac['PP_media'].round(0).astype(int).astype(str) + " mm/año"
-    )
-
-    maptab1, maptab2 = st.tabs(["Precipitación Media Anual", "Factibilidad según tus parámetros"])
-
-    with maptab1:
-        fig_nac = go.Figure()
-        fig_nac.add_trace(go.Choroplethmapbox(
-            geojson=_geojson_tri,
-            locations=_ids_tri,
-            z=_vals_tri,
-            colorscale=CS_PP,
-            zmin=0, zmax=2500,
-            marker_opacity=0.72,
-            marker_line_width=0.3,
-            marker_line_color="rgba(255,255,255,0.25)",
-            colorbar=dict(
-                title="mm/año",
-                tickvals=[0, 200, 500, 1000, 2000, 2500],
-                ticktext=["0", "200", "500", "1.000", "2.000", "2.500+"],
-                thickness=14, len=0.65,
+        LAYOUT_MAPA = dict(
+            mapbox=dict(style='open-street-map', center=dict(lat=-37.0, lon=-71.5), zoom=4),
+            margin=dict(l=0, r=0, t=0, b=0), height=680,
+            legend=dict(
+                yanchor="top", y=0.99, xanchor="left", x=0.01,
+                bgcolor="rgba(255,255,255,0.88)", bordercolor="#cccccc",
+                borderwidth=1, font=dict(size=11),
             ),
-            hovertemplate="<b>PP media:</b> %{z:.0f} mm/año<extra></extra>",
-            name="Precipitación",
-        ))
-        # Estaciones como puntos de referencia
-        fig_nac.add_trace(go.Scattermapbox(
-            lat=df_mapa_nac['Latitud'], lon=df_mapa_nac['Longitud'],
-            mode='markers',
-            marker=dict(size=4, color='rgba(21,20,52,0.55)'),
-            text=hover_est,
-            hovertemplate='%{text}<extra></extra>',
-            name="Estaciones CR2",
-        ))
-        fig_nac.update_layout(**LAYOUT_MAPA)
-        st.plotly_chart(fig_nac, use_container_width=True, config={'scrollZoom': True})
-
-        st.info(
-            "**¿Cómo leer el mapa?**  Cada zona triangulada entre estaciones muestra la "
-            "precipitación media anual interpolada (2000–2020).\n\n"
-            "| Color | PP media anual | Zona típica |\n"
-            "|-------|---------------|-------------|\n"
-            "| ⬜ Blanco | < 100 mm | Norte Grande (Tarapacá, Antofagasta) |\n"
-            "| 🔵 Azul muy claro | 100–300 mm | Norte Chico (Atacama, Coquimbo) |\n"
-            "| 🔵 Celeste | 300–800 mm | Zona Central (Valparaíso, Maule) |\n"
-            "| 🔵 Azul medio | 800–1.500 mm | La Araucanía, Los Ríos |\n"
-            "| 🟣 Azul oscuro | > 1.500 mm | Los Lagos, Aysén, Magallanes |\n\n"
-            "*Triangulación de Delaunay sobre ~400 estaciones CR2. Los puntos negros son las "
-            "estaciones reales. Las zonas sin triángulos no tienen cobertura de datos.*"
         )
 
-    with maptab2:
-        consumo_diario_mapa = numero_personas * litros_persona_dia
-        dias_op_año_mapa    = len(meses_num_seleccionados) * (30 if consumo_fines_semana else 22)
-        demanda_anual_mapa  = consumo_diario_mapa * dias_op_año_mapa
+        hover_est = (
+            "<b>" + df_mapa_nac['Nombre'] + "</b><br>"
+            + "PP media: " + df_mapa_nac['PP_media'].round(0).astype(int).astype(str) + " mm/año"
+        )
 
-        if demanda_anual_mapa <= 0 or len(meses_num_seleccionados) == 0:
-            st.warning("Define el consumo y los meses de operación en la barra lateral para ver este mapa.")
-        else:
-            # Cobertura por triángulo usando la PP media de cada uno
-            vals_cob = [
-                min(v * techo * eficiencia / demanda_anual_mapa * 100, 100)
-                for v in _vals_tri
-            ]
+        maptab1, maptab2 = st.tabs(["Precipitación Media Anual", "Factibilidad según tus parámetros"])
 
-            st.write(
-                f"Cobertura estimada con techo **{techo:.0f} m²**, eficiencia **{eficiencia*100:.0f}%**, "
-                f"consumo **{consumo_diario_mapa:.0f} L/día** y **{len(meses_num_seleccionados)} meses** "
-                f"de operación. *Estimación simplificada — no incluye el efecto de almacenamiento del estanque.*"
-            )
-
-            fig_dyn = go.Figure()
-            fig_dyn.add_trace(go.Choroplethmapbox(
+        with maptab1:
+            fig_nac = go.Figure()
+            fig_nac.add_trace(go.Choroplethmapbox(
                 geojson=_geojson_tri,
                 locations=_ids_tri,
-                z=vals_cob,
+                z=_vals_tri,
                 colorscale=CS_PP,
-                zmin=0, zmax=100,
+                zmin=0, zmax=2500,
                 marker_opacity=0.72,
                 marker_line_width=0.3,
                 marker_line_color="rgba(255,255,255,0.25)",
                 colorbar=dict(
-                    title="Cobertura %",
-                    tickvals=[0, 20, 40, 60, 80, 100],
-                    ticktext=["0%", "20%", "40%", "60%", "80%", "100%"],
+                    title="mm/año",
+                    tickvals=[0, 200, 500, 1000, 2000, 2500],
+                    ticktext=["0", "200", "500", "1.000", "2.000", "2.500+"],
                     thickness=14, len=0.65,
                 ),
-                hovertemplate="<b>Cobertura estimada:</b> %{z:.1f}%<extra></extra>",
-                name="Cobertura",
+                hovertemplate="<b>PP media:</b> %{z:.0f} mm/año<extra></extra>",
+                name="Precipitación",
             ))
-            fig_dyn.add_trace(go.Scattermapbox(
+            # Estaciones como puntos de referencia
+            fig_nac.add_trace(go.Scattermapbox(
                 lat=df_mapa_nac['Latitud'], lon=df_mapa_nac['Longitud'],
                 mode='markers',
                 marker=dict(size=4, color='rgba(21,20,52,0.55)'),
@@ -1602,27 +1559,91 @@ with tab3:
                 hovertemplate='%{text}<extra></extra>',
                 name="Estaciones CR2",
             ))
-
-            if 'informe_datos' in st.session_state:
-                id_ = st.session_state['informe_datos']
-                fig_dyn.add_trace(go.Scattermapbox(
-                    lat=[id_['lat_proyecto']], lon=[id_['lon_proyecto']],
-                    mode='markers+text',
-                    marker=dict(size=14, color='#151434'),
-                    text=[id_['nombre_proyecto']],
-                    textposition="top right",
-                    hovertemplate=f"<b>{id_['nombre_proyecto']}</b><extra></extra>",
-                    name="Tu proyecto",
-                ))
-
-            fig_dyn.update_layout(**LAYOUT_MAPA)
-            st.plotly_chart(fig_dyn, use_container_width=True, config={'scrollZoom': True})
+            fig_nac.update_layout(**LAYOUT_MAPA)
+            st.plotly_chart(fig_nac, use_container_width=True, config={'scrollZoom': True})
 
             st.info(
-                "La cobertura se estima como **(PP media × techo × eficiencia) ÷ demanda anual**. "
-                "No incluye el efecto de amortiguación del estanque — zonas con lluvia concentrada "
-                "en pocos meses pueden aparecer con cobertura más baja de la real."
+                "**¿Cómo leer el mapa?**  Cada zona triangulada entre estaciones muestra la "
+                "precipitación media anual interpolada (2000–2020).\n\n"
+                "| Color | PP media anual | Zona típica |\n"
+                "|-------|---------------|-------------|\n"
+                "| ⬜ Blanco | < 100 mm | Norte Grande (Tarapacá, Antofagasta) |\n"
+                "| 🔵 Azul muy claro | 100–300 mm | Norte Chico (Atacama, Coquimbo) |\n"
+                "| 🔵 Celeste | 300–800 mm | Zona Central (Valparaíso, Maule) |\n"
+                "| 🔵 Azul medio | 800–1.500 mm | La Araucanía, Los Ríos |\n"
+                "| 🟣 Azul oscuro | > 1.500 mm | Los Lagos, Aysén, Magallanes |\n\n"
+                "*Triangulación de Delaunay sobre ~400 estaciones CR2. Los puntos negros son las "
+                "estaciones reales. Las zonas sin triángulos no tienen cobertura de datos.*"
             )
+
+        with maptab2:
+            consumo_diario_mapa = numero_personas * litros_persona_dia
+            dias_op_año_mapa    = len(meses_num_seleccionados) * (30 if consumo_fines_semana else 22)
+            demanda_anual_mapa  = consumo_diario_mapa * dias_op_año_mapa
+
+            if demanda_anual_mapa <= 0 or len(meses_num_seleccionados) == 0:
+                st.warning("Define el consumo y los meses de operación en la barra lateral para ver este mapa.")
+            else:
+                # Cobertura por triángulo usando la PP media de cada uno
+                vals_cob = [
+                    min(v * techo * eficiencia / demanda_anual_mapa * 100, 100)
+                    for v in _vals_tri
+                ]
+
+                st.write(
+                    f"Cobertura estimada con techo **{techo:.0f} m²**, eficiencia **{eficiencia*100:.0f}%**, "
+                    f"consumo **{consumo_diario_mapa:.0f} L/día** y **{len(meses_num_seleccionados)} meses** "
+                    f"de operación. *Estimación simplificada — no incluye el efecto de almacenamiento del estanque.*"
+                )
+
+                fig_dyn = go.Figure()
+                fig_dyn.add_trace(go.Choroplethmapbox(
+                    geojson=_geojson_tri,
+                    locations=_ids_tri,
+                    z=vals_cob,
+                    colorscale=CS_PP,
+                    zmin=0, zmax=100,
+                    marker_opacity=0.72,
+                    marker_line_width=0.3,
+                    marker_line_color="rgba(255,255,255,0.25)",
+                    colorbar=dict(
+                        title="Cobertura %",
+                        tickvals=[0, 20, 40, 60, 80, 100],
+                        ticktext=["0%", "20%", "40%", "60%", "80%", "100%"],
+                        thickness=14, len=0.65,
+                    ),
+                    hovertemplate="<b>Cobertura estimada:</b> %{z:.1f}%<extra></extra>",
+                    name="Cobertura",
+                ))
+                fig_dyn.add_trace(go.Scattermapbox(
+                    lat=df_mapa_nac['Latitud'], lon=df_mapa_nac['Longitud'],
+                    mode='markers',
+                    marker=dict(size=4, color='rgba(21,20,52,0.55)'),
+                    text=hover_est,
+                    hovertemplate='%{text}<extra></extra>',
+                    name="Estaciones CR2",
+                ))
+
+                if 'informe_datos' in st.session_state:
+                    id_ = st.session_state['informe_datos']
+                    fig_dyn.add_trace(go.Scattermapbox(
+                        lat=[id_['lat_proyecto']], lon=[id_['lon_proyecto']],
+                        mode='markers+text',
+                        marker=dict(size=14, color='#151434'),
+                        text=[id_['nombre_proyecto']],
+                        textposition="top right",
+                        hovertemplate=f"<b>{id_['nombre_proyecto']}</b><extra></extra>",
+                        name="Tu proyecto",
+                    ))
+
+                fig_dyn.update_layout(**LAYOUT_MAPA)
+                st.plotly_chart(fig_dyn, use_container_width=True, config={'scrollZoom': True})
+
+                st.info(
+                    "La cobertura se estima como **(PP media × techo × eficiencia) ÷ demanda anual**. "
+                    "No incluye el efecto de amortiguación del estanque — zonas con lluvia concentrada "
+                    "en pocos meses pueden aparecer con cobertura más baja de la real."
+                )
 
 
 # ===============================================================
@@ -1671,7 +1692,7 @@ with tab4:
                                 try:
                                     pdf_z = generar_informe_pdf(datos_z)
                                     nombre_z = (row_z.get('nombre_proyecto') or 'proyecto').replace(' ', '_')
-                                    zf.writestr(f"{nombre_z}.pdf", pdf_z.read())
+                                    zf.writestr(f"{nombre_z}_{int(row_z['id'])}.pdf", pdf_z.read())
                                 except Exception:
                                     pass
                     zip_buf.seek(0)
@@ -1726,6 +1747,7 @@ with tab4:
                                 st.session_state['simulacion_desde_historial'] = True
                                 st.session_state.simulacion_calculada = False
                                 st.session_state.pop('_hist_cache', None)
+                                st.session_state.pop('_pdf_cache', None)
                                 st.rerun()
                             else:
                                 st.error("No se pudo cargar la simulación.")
@@ -1826,11 +1848,15 @@ if 'informe_datos' in st.session_state:
     st.markdown("---")
     st.markdown("### 📄 Informe del Proyecto")
     st.write("Descarga un informe PDF con el resumen ejecutivo del proyecto: parámetros, estación, escenarios climáticos y recomendación de tamaño óptimo.")
-    buf = generar_informe_pdf(st.session_state['informe_datos'])
+    # El PDF se genera una sola vez por simulación y se cachea en la sesión;
+    # el cache se invalida al recalcular o al cargar otra simulación del historial.
+    if st.session_state.get('_pdf_cache') is None:
+        with st.spinner("Generando informe PDF..."):
+            st.session_state['_pdf_cache'] = generar_informe_pdf(st.session_state['informe_datos']).getvalue()
     nombre_archivo = st.session_state['informe_datos']['nombre_proyecto'].replace(' ', '_')
     st.download_button(
         label="📥 Descargar Informe Completo (.pdf)",
-        data=buf,
+        data=st.session_state['_pdf_cache'],
         file_name=f"Informe_SCALL_{nombre_archivo}.pdf",
         mime="application/pdf",
         type="primary",
