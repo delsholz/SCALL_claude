@@ -7,8 +7,13 @@ Estructura:
 
 Punto de entrada: generar_informe_pdf(d) -> io.BytesIO  (d = st.session_state['informe_datos']).
 """
+import functools
 import io
+import json
 import os
+import subprocess
+import sys
+import tempfile
 from datetime import date
 
 import matplotlib
@@ -156,50 +161,52 @@ def _estilo_eje(ax):
 
 
 def _grafico_nivel(df, capacidad):
-    """Nivel REAL del estanque (Estanque Final): entre 0 y su capacidad."""
+    """Arriba: nivel REAL del estanque (entre 0 y su capacidad). Abajo: lo que sobra (rebalse) y lo que falta (déficit)."""
     _registrar_fuentes_mpl()
     x = pd.to_datetime(df["Eje X"])
     y = df["Estanque Final (L)"].astype(float).values
     cap = float(capacidad)
 
-    fig, ax = plt.subplots(figsize=(7.5, 3.0))
+    fig, (ax, ax2) = plt.subplots(2, 1, figsize=(7.5, 4.0), sharex=True,
+                                  gridspec_kw={"height_ratios": [2.1, 1.1], "hspace": 0.16})
     fig.patch.set_facecolor("white")
     _estilo_eje(ax)
+    _estilo_eje(ax2)
 
+    vac = None
     if "Día" in df.columns:
         vac = df["Día"].astype(str).str.contains("Vacaciones").values
-        if vac.any():
-            ax.fill_between(x, 0, 1, where=vac, transform=ax.get_xaxis_transform(),
-                            color="#CBD3DD", alpha=0.55, linewidth=0, label="Sin clases")
+    for a in (ax, ax2):
+        if vac is not None and vac.any():
+            a.fill_between(x, 0, 1, where=vac, transform=a.get_xaxis_transform(),
+                           color="#CBD3DD", alpha=0.55, linewidth=0,
+                           label="Sin clases" if a is ax else None)
 
     ax.fill_between(x, y, color=_hex(CIELO), alpha=0.35, linewidth=0)
     ax.plot(x, y, color=_hex(AZUL), linewidth=1.8, label="Nivel del estanque")
     ax.axhline(cap, color="#E0A800", linestyle="--", linewidth=1.4,
                label=f"Capacidad: {formato_chileno(cap, 0)} L")
-
-    ax.set_ylim(-cap * 0.13, cap * 1.14)
-    col = _col_deficit(df)
-    sin_agua = (df[col] < 0).values
-    if sin_agua.any():
-        ax.vlines(x[sin_agua], -cap * 0.115, -cap * 0.02, color="#E5533D", linewidth=1.3,
-                  label="Día sin agua")
-    if "Rebalse (L)" in df.columns:
-        reb = (df["Rebalse (L)"] > 0).values
-        if reb.any():
-            ax.vlines(x[reb], cap * 1.03, cap * 1.12, color=_hex(AGUA), linewidth=1.3,
-                      label="Rebalse")
-
-    ax.set_ylim(-cap * 0.13, cap * 1.14)
+    ax.set_ylim(-cap * 0.03, cap * 1.08)
     ax.set_yticks([t for t in ax.get_yticks() if 0 <= t <= cap * 1.001])
-    ax.xaxis.set_major_locator(mdates.MonthLocator())
-    ax.xaxis.set_major_formatter(plt.FuncFormatter(
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: formato_chileno(v, 0)))
+    ax.set_ylabel("Nivel (L)", fontsize=8.5, color=_hex(OSC))
+    ax.legend(fontsize=7.5, loc="lower left", ncol=3, frameon=True, framealpha=0.92,
+              facecolor="white", edgecolor=_hex(CIELO))
+
+    reb = df["Rebalse (L)"].astype(float).values if "Rebalse (L)" in df.columns else np.zeros(len(df))
+    deficit = df[_col_deficit(df)].astype(float).values
+    ax2.bar(x, np.where(reb > 0, reb, 0), width=1.0, color=_hex(AGUA), linewidth=0,
+            label="Rebalse: lo que no cabe en el estanque")
+    ax2.bar(x, np.where(deficit < 0, deficit, 0), width=1.0, color="#E5533D", linewidth=0,
+            label="Déficit: lo que falta para cubrir la demanda")
+    ax2.axhline(0, color=_hex(AZUL), linewidth=0.8)
+    ax2.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: formato_chileno(v, 0)))
+    ax2.set_ylabel("L por día", fontsize=8.5, color=_hex(OSC))
+    ax2.xaxis.set_major_locator(mdates.MonthLocator())
+    ax2.xaxis.set_major_formatter(plt.FuncFormatter(
         lambda v, _: _MESES_ES.get(mdates.num2date(v).month, "")))
-    ax.yaxis.set_major_formatter(mticker.FuncFormatter(
-        lambda v, _: formato_chileno(v, 0)))
-    ax.set_ylabel("Volumen (L)", fontsize=8.5, color=_hex(OSC))
-    ax.legend(fontsize=7.5, loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=5,
-              frameon=False)
-    fig.tight_layout(pad=0.4)
+    ax2.legend(fontsize=7.5, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=2, frameon=False)
+    fig.subplots_adjust(left=0.1, right=0.99, top=0.98, bottom=0.21)
     return _png(fig, 190)
 
 
@@ -327,6 +334,41 @@ def _dibujo_portada(m, d, capacidad, cobertura):
     return buf
 
 
+@functools.lru_cache(maxsize=16)
+def _esquema_png(techo_txt, litros_txt):
+    """PNG del esquema de agua lluvia hecho con esquema_skill.py (el generador de /generador-esquema-solucion).
+    Solo el dibujo y la lista de etapas, sin título ni logos."""
+    cfg = {
+        "tipo": "escuela", "nombre": "SCALL", "solo_dibujo": True, "alto_dibujo": 96, "dpi": 140, "ncol_etapas": 2, "texto_etapas": 1.15,
+        "fuente": {"tipo": "lluvia", "medida": techo_txt, "dato": "captación de agua lluvia"},
+        "tramos": [{"estanque": {"forma": "vertical", "nuevo": True, "medida": litros_txt,
+                                 "nombre": "Estanque de agua lluvia", "dato": "almacenamiento",
+                                 "entrada": "techo"}}],
+        "destino": {"red_enterrada": True},
+    }
+    with tempfile.TemporaryDirectory() as td:
+        cj, salida = os.path.join(td, "cfg.json"), os.path.join(td, "esquema.png")
+        with open(cj, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False)
+        r = subprocess.run([sys.executable, os.path.join(_BASE, "esquema_skill.py"), cj, salida],
+                           capture_output=True, timeout=120,
+                           env={**os.environ, "MPLBACKEND": "Agg", "PYTHONIOENCODING": "utf-8"})
+        if r.returncode != 0 or not os.path.exists(salida):
+            raise RuntimeError(r.stderr.decode("utf-8", "replace")[-300:])
+        with open(salida, "rb") as f:
+            return f.read()
+
+
+def _dibujo_cover(m, d, capacidad, cobertura):
+    """(PNG, alto en mm a 210 mm de ancho): esquema de la skill; si falla, el dibujo simple de respaldo."""
+    try:
+        datos = _esquema_png(f"{formato_chileno(float(d['techo']), 1)} m²", f"{formato_chileno(float(capacidad), 0)} L")
+        w, h = Image.open(io.BytesIO(datos)).size
+        return io.BytesIO(datos), 210.0 * h / w
+    except Exception:
+        return _dibujo_portada(m, d, capacidad, cobertura), 94.0
+
+
 def _logo(ancho_px):
     """Logo blanco de Amulén, en alta resolución (con respaldo al antiguo)."""
     ruta = _LOGO if os.path.exists(_LOGO) else _LOGO_RESPALDO
@@ -384,6 +426,11 @@ def generar_informe_pdf(d):
         dias_seco_opt = m_opt["seco"]["dias_sin_agua"]
     else:
         cob_opt, dias_seco_opt = pct_n, m["seco"]["dias_sin_agua"]
+    dias_normal_opt = (m_opt["normal"] if hay_opt else m["normal"])["dias_sin_agua"]
+    # lugar: dirección + comuna y región (lo que exista); las coordenadas van siempre
+    _comuna_reg = ", ".join(v for v in (d.get("comuna"), d.get("region")) if not _vacio(v))
+    lugar_txt = " · ".join(v for v in (d.get("direccion") if not _vacio(d.get("direccion")) else "", _comuna_reg) if v)
+    alto_panel = 32 + (5.6 if lugar_txt else 0)
     veredicto = clasificar_viabilidad(cob_opt)
     anios_validos = len(totales) or (d["anio_fin"] - d["anio_inicio"] + 1)
     n_meses = max(len(d.get("meses_seleccionados") or []), 1)
@@ -456,9 +503,9 @@ def generar_informe_pdf(d):
 
     # nombre del proyecto, su ubicación y la estación de referencia
     pdf.set_fill_color(*OSC2)
-    pdf.rect(10, 58, 190, 32, "F", round_corners=True, corner_radius=3)
+    pdf.rect(10, 58, 190, alto_panel, "F", round_corners=True, corner_radius=3)
     pdf.set_fill_color(*AMARILLO)
-    pdf.rect(10, 58, 2.2, 32, "F")
+    pdf.rect(10, 58, 2.2, alto_panel, "F")
     nombre = str(d["nombre_proyecto"])
     sz = 20
     pdf.set_font("Poppins", "B", sz)
@@ -484,7 +531,8 @@ def generar_informe_pdf(d):
     datos_txt = f"Registros CR² {d['anio_inicio']}–{d['anio_fin']}"
     if not _vacio(d.get("pct_calidad")):
         datos_txt += f"  ·  {_num(d['pct_calidad'], 0, ' %')} de meses con dato"
-    for k, (txt, col) in enumerate(((ubic, CIELO), (est, CIELO), (datos_txt, ARENA))):
+    lineas_p = ([(lugar_txt, BLANCO)] if lugar_txt else []) + [(ubic, CIELO), (est, CIELO), (datos_txt, ARENA)]
+    for k, (txt, col) in enumerate(lineas_p):
         pdf.set_text_color(*col)
         sz_l = 8.5
         pdf.set_font("Poppins", "", sz_l)
@@ -494,11 +542,13 @@ def generar_informe_pdf(d):
         pdf.set_xy(17, 71.5 + k * 5.6)
         pdf.cell(180, 5, txt)
 
-    # dibujo del sistema
+    # dibujo del sistema (esquema de la skill de afiches)
+    y_img = 58 + alto_panel + 4
     try:
-        pdf.image(_dibujo_portada(m, d, cap_opt if hay_opt else d['capacidad_maxima'], cob_opt), x=0, y=94, w=210)
+        img_dib, alto_dib = _dibujo_cover(m, d, cap_opt if hay_opt else d['capacidad_maxima'], cob_opt)
+        pdf.image(img_dib, x=0, y=y_img, w=210)
     except Exception:
-        pass
+        alto_dib = 0
 
     # tarjetas de resultado
     color_v = {"VIABLE": LIMA, "PARCIALMENTE VIABLE": AMARILLO}.get(veredicto, ROJO_SUAVE)
@@ -527,19 +577,19 @@ def generar_informe_pdf(d):
         pdf.set_text_color(*c_sub)
         pdf.cell(w - 10, 4.5, sub)
 
-    cy = 192
+    cy = y_img + alto_dib + 3
     sub_est = "con el estanque recomendado" if hay_opt else "con el estanque ingresado"
-    tarjeta(10, cy, 92, 30, "Veredicto", veredicto, sub_est, color_v,
+    tarjeta(10, cy, 92, 28, "Veredicto", veredicto, sub_est, color_v,
             OSC, OSC, OSC, tam_valor=19)
-    tarjeta(108, cy, 92, 30, "Demanda cubierta · año normal", _num(cob_opt, 1, " %"),
+    tarjeta(108, cy, 92, 28, "Demanda cubierta · año normal", _num(cob_opt, 1, " %"),
             f"con estanque óptimo de {_num(cap_opt)} L" if hay_opt else f"con estanque de {_num(d['capacidad_maxima'])} L",
             OSC2, CIELO, AMARILLO, ARENA, tam_valor=28)
-    tarjeta(10, cy + 35, 92, 30, "Estanque recomendado", _num(cap_opt, 0, " L"),
+    tarjeta(10, cy + 32, 92, 28, "Estanque recomendado", _num(cap_opt, 0, " L"),
             "donde agrandar deja de dar ganancias importantes", OSC2, CIELO, BLANCO, ARENA)
-    tarjeta(108, cy + 35, 92, 30, "Días sin agua · año seco", _num(dias_seco_opt),
-            f"de {_num(m['seco']['dias_operacion'])} días de operación", OSC2, CIELO, BLANCO, ARENA)
+    tarjeta(108, cy + 32, 92, 28, "Días sin agua · año normal", _num(dias_normal_opt),
+            f"de {_num(m['normal']['dias_operacion'])} días de operación", OSC2, CIELO, BLANCO, ARENA)
 
-    pdf.set_xy(10, 264)
+    pdf.set_xy(10, cy + 32 + 28 + 4)
     pdf.set_font("Poppins", "I", 8.5)
     pdf.set_text_color(*ARENA)
     pdf.multi_cell(190, 5, explica, align="C")
@@ -616,6 +666,11 @@ def generar_informe_pdf(d):
                         f"({'+' if mult > 1 else ''}{_num((float(mult) - 1) * 100, 1)} %)",
               "", 7.5, True, color=TEXTO)
         y += 6.8
+    if lugar_txt:
+        pdf.set_fill_color(*ARENA)
+        celda(46, 6.8, "Ubicación", "B", 7.5, True, color=TEXTO, x=10, y=y)
+        celda(144, 6.8, lugar_txt, "", 7.5, True, color=TEXTO)
+        y += 6.8
     y += 5
 
     y = titulo_seccion("ESTACIÓN METEOROLÓGICA UTILIZADA", y)
@@ -663,11 +718,11 @@ def generar_informe_pdf(d):
     y += 6
 
     # gráfico del nivel real del estanque
-    y = titulo_seccion(f"NIVEL DEL ESTANQUE · AÑO NORMAL ({d['anio_mediano']})", y)
     try:
         img, alto = _grafico_nivel(d["df_normal"], d["capacidad_maxima"])
-        if not hay_lugar(y + 2, alto):
+        if not hay_lugar(y + 9, alto):
             y = nueva_pagina("Datos del análisis")
+        y = titulo_seccion(f"NIVEL DEL ESTANQUE · AÑO NORMAL ({d['anio_mediano']})", y)
         pdf.image(img, x=10, y=y + 2, w=190)
         y += alto + 7
     except Exception as e:
@@ -731,6 +786,8 @@ def generar_informe_pdf(d):
         (f"Como referencia, con el estanque ingresado de {_num(d['capacidad_maxima'])} L la cobertura del año "
          f"normal es {_num(pct_n, 1, ' %')}." if hay_opt else
          "Se recomienda revisar el tamaño del estanque con datos más completos.", ""),
+        (f"En el año normal ({d['anio_mediano']}) se registran {_num(dias_normal_opt)} días sin suministro"
+         f"{' con el estanque recomendado' if hay_opt else ''}.", ""),
         (f"En el año seco (percentil 5, año {d['anio_seco']}) se registran {_num(dias_seco_opt)} días "
          f"sin suministro{' con el estanque recomendado' if hay_opt else ''}. Se recomienda disponer de una fuente "
          f"de abastecimiento complementaria para cubrir esos períodos críticos.", ""),

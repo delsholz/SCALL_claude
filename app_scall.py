@@ -269,6 +269,26 @@ if st.sidebar.button("📍 Obtener altitud automáticamente"):
 alt_default = int(st.session_state.get('alt_auto', 500))
 alt_proyecto = st.sidebar.number_input("Altitud (m.s.n.m.)", value=alt_default, step=10)
 
+direccion_proyecto = st.sidebar.text_input("Dirección (opcional)", "", help="Aparece en la portada del informe.")
+comuna_proyecto = st.sidebar.text_input(
+    "Comuna (opcional)", "",
+    help="Si la dejas vacía, se busca sola a partir de las coordenadas (OpenStreetMap).")
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _lugar_desde_coordenadas(lat, lon):
+    """Comuna y región de unas coordenadas (OpenStreetMap/Nominatim). Lanza error si no hay red: así no se cachea el fallo."""
+    import re
+    resp = requests.get(
+        "https://nominatim.openstreetmap.org/reverse",
+        params={"lat": lat, "lon": lon, "format": "jsonv2", "zoom": 10, "accept-language": "es"},
+        headers={"User-Agent": "SimuladorSCALL/1.0"}, timeout=6)
+    resp.raise_for_status()
+    a = resp.json().get("address", {})
+    comuna = a.get("municipality") or a.get("city") or a.get("town") or a.get("village") or a.get("county") or ""
+    region = re.sub(r"^Región (de(l| la)? )?", "", a.get("state") or a.get("region") or "")
+    return comuna, region
+
 coef_altitud = 5
 st.sidebar.subheader("Gradiente Orográfico (Lluvia vs Altura)")
 coef_orografico = st.sidebar.slider(
@@ -666,6 +686,13 @@ with tab1:
                 anio_inicio  = int(datos_reales['Año'].min()) if not datos_reales.empty else int(lluvias_mensuales['Año'].min())
                 anio_fin     = int(datos_reales['Año'].max()) if not datos_reales.empty else int(lluvias_mensuales['Año'].max())
 
+                try:
+                    comuna_txt, region_txt = _lugar_desde_coordenadas(round(lat_proyecto, 4), round(lon_proyecto, 4))
+                except Exception:
+                    comuna_txt, region_txt = "", ""                 # sin red: el informe muestra solo las coordenadas
+                if comuna_proyecto.strip():
+                    comuna_txt = comuna_proyecto.strip()
+
                 alt_estacion = estacion_cercana.get('Altitud', float('nan'))
                 # Calculamos el desnivel real (positivo si el proyecto está más alto)
                 desnivel_real = (alt_proyecto - alt_estacion) if not pd.isna(alt_estacion) else 0.0
@@ -891,6 +918,9 @@ with tab1:
                     'lat_proyecto':           lat_proyecto,
                     'lon_proyecto':           lon_proyecto,
                     'alt_proyecto':           alt_proyecto,
+                    'direccion':              direccion_proyecto.strip(),
+                    'comuna':                 comuna_txt,
+                    'region':                 region_txt,
                     'techo':                  techo,
                     'capacidad_maxima':       capacidad_maxima,
                     'eficiencia':             eficiencia,
