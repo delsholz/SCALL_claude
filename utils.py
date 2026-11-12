@@ -35,3 +35,12 @@ def arreglar_coordenada(val, es_longitud=False):
     else:
         fixed = val_clean[:3] + '.' + val_clean[3:]
     return float(fixed)
+
+
+def clasificar_viabilidad(cobertura_pct):
+    """Veredicto del informe según la cobertura (%) del año normal con el estanque ingresado."""
+    if cobertura_pct >= 60:
+        return "VIABLE"
+    if cobertura_pct >= 30:
+        return "PARCIALMENTE VIABLE"
+    return "NO RECOMENDADO"

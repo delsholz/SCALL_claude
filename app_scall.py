@@ -6,14 +6,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import io
 import requests
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-import matplotlib.ticker as mticker
-
-from fpdf import FPDF
-
+from informe_pdf import generar_informe_pdf
 from utils import formato_chileno, calcular_distancia_vectorizada
 from data_loader import cargar_datos_crudos, aplicar_filtro_calidad
 from simulator import (simular_continua, simular_escenario,
@@ -28,107 +21,6 @@ except Exception:
     _HISTORIAL_DISPONIBLE = False
 
 st.set_page_config(page_title="Simulador SCALL", page_icon="💧", layout="wide")
-
-
-_MESES_ES = {1:'Ene',2:'Feb',3:'Mar',4:'Abr',5:'May',6:'Jun',
-             7:'Jul',8:'Ago',9:'Sep',10:'Oct',11:'Nov',12:'Dic'}
-
-def _generar_grafico_curva_optima_pdf(caps, efs, cap_opt, ef_act, ef_opt, capacidad_maxima):
-    import struct
-    fig, ax = plt.subplots(figsize=(9.5, 3.2))
-
-    ax.plot(caps, efs, color='#2e68b1', linewidth=2.2, marker='o', markersize=3.5,
-            markerfacecolor='#76c2f5', label='Cobertura simulada')
-
-    # Punto actual
-    ax.axvline(x=capacidad_maxima, color='#e05c2e', linestyle='--', linewidth=1.4,
-               label=f'Estanque actual ({capacidad_maxima:,.0f} L)')
-    if ef_act is not None:
-        ax.scatter([capacidad_maxima], [ef_act], color='#e05c2e', s=60, zorder=5)
-
-    # Punto óptimo
-    if cap_opt is not None and ef_opt is not None:
-        ax.axvline(x=cap_opt, color='#2ca02c', linestyle='--', linewidth=1.4,
-                   label=f'Óptimo recomendado ({cap_opt:,.0f} L)')
-        ax.scatter([cap_opt], [ef_opt], color='#2ca02c', s=80, marker='D', zorder=6,
-                   label=f'Cobertura óptima ({ef_opt:.1f}%)')
-
-    ax.set_xlabel('Capacidad del estanque (L)', fontsize=8, color='#151434')
-    ax.set_ylabel('Cobertura de demanda (%)', fontsize=8, color='#151434')
-    ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'{x:,.0f}'))
-    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'{x:.0f}%'))
-    ax.tick_params(axis='both', labelsize=7.5, colors='#151434')
-    ax.legend(fontsize=7, loc='lower right', framealpha=0.9,
-              facecolor='#f8f3ea', edgecolor='#2e68b1')
-    ax.set_facecolor('#f8f3ea')
-    ax.grid(axis='both', color='#2e68b1', alpha=0.12)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['left'].set_color('#2e68b1')
-    ax.spines['bottom'].set_color('#2e68b1')
-    fig.patch.set_facecolor('white')
-    plt.tight_layout(pad=0.4)
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
-    plt.close(fig)
-
-    buf.seek(16)
-    w_px = struct.unpack('>I', buf.read(4))[0]
-    h_px = struct.unpack('>I', buf.read(4))[0]
-    h_mm = 190.0 * h_px / w_px
-
-    buf.seek(0)
-    return buf, h_mm
-
-
-def _generar_grafico_estanque_pdf(df_normal, capacidad_maxima):
-    import struct
-
-    eje_x  = pd.to_datetime(df_normal['Eje X'])
-    y_vals = df_normal['Agua Acumulada Teórica (L)'].values
-
-    fig, ax = plt.subplots(figsize=(9.5, 2.8))
-    # Colores Amulén: Azul Base #2e68b1, Azul Cielo #76c2f5
-    ax.fill_between(eje_x, y_vals, alpha=0.18, color='#2e68b1')
-    ax.plot(eje_x, y_vals, color='#2e68b1', linewidth=2.0, label='Nivel del estanque')
-    ax.axhline(y=capacidad_maxima, color='#151434', linestyle='--', linewidth=1.5,
-               label=f'Capacidad: {capacidad_maxima:,.0f} L')
-    ax.axhline(y=0, color='#76c2f5', linestyle=':', linewidth=1.2, label='Sin agua')
-
-    def _fmt_mes(x, _):
-        try:
-            return _MESES_ES.get(mdates.num2date(x).month, '')
-        except Exception:
-            return ''
-
-    ax.xaxis.set_major_locator(mdates.MonthLocator())
-    ax.xaxis.set_major_formatter(plt.FuncFormatter(_fmt_mes))
-    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'{x:,.0f}'))
-    ax.tick_params(axis='both', labelsize=7.5, colors='#151434')
-    ax.set_ylabel('Volumen (L)', fontsize=8, color='#151434')
-    ax.legend(fontsize=7.5, loc='upper right', framealpha=0.9,
-              facecolor='#f8f3ea', edgecolor='#2e68b1')
-    ax.set_facecolor('#f8f3ea')
-    ax.grid(axis='y', color='#2e68b1', alpha=0.12)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['left'].set_color('#2e68b1')
-    ax.spines['bottom'].set_color('#2e68b1')
-    fig.patch.set_facecolor('white')
-    plt.tight_layout(pad=0.4)
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
-    plt.close(fig)
-
-    buf.seek(16)
-    w_px = struct.unpack('>I', buf.read(4))[0]
-    h_px = struct.unpack('>I', buf.read(4))[0]
-    h_mm = 190.0 * h_px / w_px
-
-    buf.seek(0)
-    return buf, h_mm
 
 
 @st.cache_data
@@ -194,361 +86,6 @@ def _triangular_delaunay():
     geojson = {"type": "FeatureCollection", "features": features}
     return geojson, tri_vals, df
 
-
-def _logo_hires(path, target_w_px=600):
-    """Upscale logo PNG to target width using Lanczos for sharp rendering in PDF."""
-    try:
-        from PIL import Image
-        img = Image.open(path).convert("RGBA")
-        w, h = img.size
-        if w < target_w_px:
-            new_h = int(h * target_w_px / w)
-            img = img.resize((target_w_px, new_h), Image.LANCZOS)
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        buf.seek(0)
-        return buf
-    except Exception:
-        return path  # fallback: ruta original
-
-
-# ===============================================================
-# GENERADOR DE INFORME PDF — Identidad visual Fundación Amulén
-# ===============================================================
-def generar_informe_pdf(d):
-    from datetime import date
-
-    # Paleta oficial Amulén
-    AZUL_OSC   = (21,  20,  52)   # #151434
-    AZUL_BASE  = (46, 104, 177)   # #2e68b1
-    AZUL_CIELO = (118, 194, 245)  # #76c2f5
-    ARENA      = (248, 243, 234)  # #f8f3ea
-    VERDE_AC   = (225, 255, 188)  # #e1ffbc
-    BLANCO     = (255, 255, 255)
-    TEXTO      = (21,  20,  52)   # azul oscuro como negro corporativo
-
-    # Colores escenarios (suaves, sobre paleta Amulén)
-    C_SECO    = (255, 243, 205)   # amarillo suave
-    C_NORMAL  = (209, 232, 248)   # azul cielo muy suave
-    C_LLUV    = (225, 255, 188)   # verde Amulén
-
-    # Logo Assets (blanco sobre oscuro) — upscaleado para evitar pixelación
-    import os
-    _BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
-    _LOGO_PATH = os.path.join(_BASE_DIR, "assets", "Logo_Amulen_blanco.png")
-    LOGO_HEADER = _logo_hires(_LOGO_PATH, target_w_px=1200)
-    LOGO_FOOTER = _logo_hires(_LOGO_PATH, target_w_px=600)
-
-    _FONTS_DIR = os.path.join(_BASE_DIR, "fonts")
-
-    # Subclase FPDF con footer automático (marca de agua logo)
-    class PDFAmulen(FPDF):
-        def footer(self):
-            H = 15  # altura total del footer
-            self.set_fill_color(*AZUL_OSC)
-            self.rect(0, self.h - H, 210, H, "F")
-            self.set_fill_color(*AZUL_CIELO)
-            self.rect(0, self.h - H, 210, 5, "F")
-            # Texto centrado verticalmente en la franja
-            self.set_y(self.h - H + 3)
-            self.set_font("Poppins", "I", 7)
-            self.set_text_color(*ARENA)
-            self.cell(0, 7,
-                      "Simulador SCALL  |  Fundacion Amulen - La Fundacion del Agua  |  Datos: CR2 Chile  |  www.cr2.cl",
-                      align="C")
-            # Logo alineado verticalmente en la franja
-            try:
-                self.image(LOGO_FOOTER, x=166, y=self.h - H + 1.5, w=38)
-            except Exception:
-                pass
-
-    pdf = PDFAmulen(orientation="P", unit="mm", format="A4")
-    pdf.set_auto_page_break(auto=True, margin=19)
-    pdf.add_page()
-    pdf.set_margins(0, 0, 0)
-
-    # Registrar Poppins (tipografía corporativa Amulén)
-    pdf.add_font("Poppins",  "",  os.path.join(_FONTS_DIR, "Poppins-Regular.ttf"),    uni=True)
-    pdf.add_font("Poppins",  "B", os.path.join(_FONTS_DIR, "Poppins-Bold.ttf"),       uni=True)
-    pdf.add_font("Poppins",  "I", os.path.join(_FONTS_DIR, "Poppins-Italic.ttf"),     uni=True)
-    pdf.add_font("Poppins",  "BI",os.path.join(_FONTS_DIR, "Poppins-BoldItalic.ttf"), uni=True)
-
-    W = 210
-    hoy = date.today().strftime("%d/%m/%Y")
-
-    def fit_cell(w, h, txt, style="", size=8, fill=True, align="L", color=None):
-        """Renderiza celda ajustando el tamaño de fuente si el texto no cabe."""
-        if color:
-            pdf.set_text_color(*color)
-        sz = size
-        pdf.set_font("Poppins", style, sz)
-        while sz > 5.5 and pdf.get_string_width(str(txt)) > w - 1.5:
-            sz -= 0.5
-            pdf.set_font("Poppins", style, sz)
-        pdf.cell(w, h, str(txt), fill=fill, align=align)
-        pdf.set_font("Poppins", style, size)
-
-    def sec_title(titulo, y):
-        pdf.set_fill_color(*AZUL_CIELO)
-        pdf.rect(10, y, 3, 7, "F")
-        pdf.set_fill_color(*AZUL_BASE)
-        pdf.set_text_color(*BLANCO)
-        pdf.set_font("Poppins", "B", 9)
-        pdf.set_xy(13, y)
-        pdf.cell(187, 7, f"  {titulo}", fill=True, ln=True)
-        return pdf.get_y()
-
-    def kv_row(y, lbl, val, w_lbl=55, w_val=135, bg=BLANCO, size=8.5):
-        pdf.set_fill_color(*bg)
-        pdf.set_text_color(*TEXTO)
-        pdf.set_xy(10, y)
-        fit_cell(w_lbl, 6.5, lbl, style="B", size=size, fill=True)
-        fit_cell(w_val, 6.5, val, style="",  size=size, fill=True)
-        return y + 6.5
-
-    # ── HEADER ────────────────────────────────────────────────
-    pdf.set_fill_color(*AZUL_OSC)
-    pdf.rect(0, 0, W, 32, "F")
-    pdf.set_fill_color(*AZUL_CIELO)
-    pdf.rect(0, 32, W, 2.5, "F")
-
-    try:
-        pdf.image(LOGO_HEADER, x=152, y=5, w=48)
-    except Exception:
-        pass
-
-    pdf.set_text_color(*BLANCO)
-    pdf.set_font("Poppins", "B", 19)
-    pdf.set_xy(12, 6)
-    pdf.cell(135, 10, "SIMULADOR SCALL")
-    pdf.set_font("Poppins", "", 9)
-    pdf.set_text_color(*AZUL_CIELO)
-    pdf.set_xy(12, 18)
-    pdf.cell(135, 6, "Informe de Viabilidad  |  Cosecha de Aguas Lluvias")
-    pdf.set_font("Poppins", "I", 8)
-    pdf.set_text_color(200, 220, 240)
-    pdf.set_xy(12, 25)
-    pdf.cell(135, 5, "Fundacion Amulen  -  La Fundacion del Agua")
-
-    # ── BARRA NOMBRE PROYECTO (Arena) ─────────────────────────
-    pdf.set_fill_color(*ARENA)
-    pdf.rect(0, 34.5, W, 13, "F")
-    pdf.set_text_color(*AZUL_OSC)
-    pdf.set_font("Poppins", "B", 13)
-    pdf.set_xy(12, 36)
-    # Auto-ajuste si el nombre es largo
-    nombre_sz = 13
-    while nombre_sz > 8 and pdf.get_string_width(d["nombre_proyecto"]) > 180:
-        nombre_sz -= 0.5
-        pdf.set_font("Poppins", "B", nombre_sz)
-    pdf.cell(186, 9, d["nombre_proyecto"])
-
-    # ── LÍNEA DE METADATOS ────────────────────────────────────
-    pdf.set_fill_color(*BLANCO)
-    pdf.rect(0, 47.5, W, 8, "F")
-    pdf.set_text_color(100, 100, 110)
-    pdf.set_font("Poppins", "I", 7.5)
-    pdf.set_xy(12, 49)
-    pdf.cell(0, 5,
-             f"Generado el {hoy}   |   "
-             f"Periodo analizado: {d['anio_inicio']}-{d['anio_fin']}   |   "
-             f"Fuente climatica: CR2 Chile")
-
-    y = 58
-
-    # ── SECCIÓN: PARÁMETROS ───────────────────────────────────
-    y = sec_title("PARAMETROS DEL SISTEMA", y)
-
-    # Fila: 4 columnas (label | valor | label | valor)
-    params = [
-        ("Superficie del Techo",    f"{d['techo']} m2",
-         "Consumo Mensual Total",   f"{d['consumo_mensual']:,.0f} L/mes"),
-        ("Capacidad del Estanque",  f"{d['capacidad_maxima']:,.0f} L",
-         "Tipo de Uso",             d["tipo_uso"].split("(")[0].strip()),
-        ("Eficiencia de Captacion", f"{d['eficiencia']*100:.0f}%",
-         "Coordenadas",             f"{d['lat_proyecto']:.4f} / {d['lon_proyecto']:.4f}"),
-        ("Numero de Personas",      str(d['numero_personas']),
-         "Altitud del Proyecto",    f"{d['alt_proyecto']} m.s.n.m."),
-        ("Consumo por Persona",     f"{d['litros_persona_dia']} L/persona/dia",
-         "Periodo Analizado",       f"{d['anio_inicio']} - {d['anio_fin']}"),
-    ]
-    for i, (l1, v1, l2, v2) in enumerate(params):
-        bg = ARENA if i % 2 == 0 else BLANCO
-        pdf.set_fill_color(*bg)
-        pdf.set_text_color(*TEXTO)
-        pdf.set_xy(10, y)
-        fit_cell(42, 6.5, l1, style="B", size=7.5, fill=True)
-        fit_cell(53, 6.5, v1, style="",  size=7.5, fill=True)
-        fit_cell(42, 6.5, l2, style="B", size=7.5, fill=True)
-        fit_cell(53, 6.5, v2, style="",  size=7.5, fill=True)
-        y += 6.5
-
-    # Meses de operacion en fila propia (puede ser texto largo)
-    pdf.set_fill_color(*AZUL_CIELO if len(params) % 2 == 0 else BLANCO)
-    meses_txt = ", ".join(d["meses_seleccionados"])
-    bg_m = ARENA if len(params) % 2 == 0 else BLANCO
-    pdf.set_fill_color(*bg_m)
-    pdf.set_text_color(*TEXTO)
-    pdf.set_xy(10, y)
-    fit_cell(42, 6.5, "Meses de Operacion", style="B", size=7.5, fill=True)
-    fit_cell(148, 6.5, meses_txt, style="", size=7.5, fill=True)
-    y += 6.5 + 3
-
-    # ── SECCIÓN: ESTACIÓN ─────────────────────────────────────
-    y = sec_title("ESTACION METEOROLOGICA UTILIZADA", y)
-    station = [
-        ("Nombre de la Estacion",  d["est_nombre"]),
-        ("Codigo",                 d["est_codigo"]),
-        ("Altitud de la Estacion", f"{d['est_altitud']} m.s.n.m."),
-        ("Desnivel con Proyecto",  f"{d['desnivel']} m"),
-        ("Distancia Efectiva",     f"{d['distancia']:.1f} km (con correccion altitudinal)"),
-        ("Calidad de Datos",       f"{d['pct_calidad']:.1f}% de meses validos en el periodo"),
-    ]
-    for i, (lbl, val) in enumerate(station):
-        bg = ARENA if i % 2 == 0 else BLANCO
-        y = kv_row(y, lbl, str(val), bg=bg)
-    y += 4
-
-    # ── SECCIÓN: TABLA RESULTADOS ─────────────────────────────
-    y = sec_title("RESULTADOS POR ESCENARIO CLIMATICO", y)
-
-    col_ws  = [55, 14, 27, 30, 28, 24, 12]
-    headers = ["Escenario", "Año", "Lluvia (mm)", "Captado (L)",
-               "Demanda (L)", "Cobertura", "Sin agua"]
-
-    pdf.set_fill_color(*AZUL_OSC)
-    pdf.set_text_color(*BLANCO)
-    pdf.set_font("Poppins", "B", 8)
-    pdf.set_xy(10, y)
-    for h, cw in zip(headers, col_ws):
-        pdf.cell(cw, 8, h, border=0, align="C", fill=True)
-    y += 8
-
-    escenarios = [
-        ("Año Seco (P5)",        d["anio_seco"],     d["df_seco"],     C_SECO),
-        ("Año Normal (Mediana)", d["anio_mediano"],  d["df_normal"],   C_NORMAL),
-        ("Año Lluvioso (P95)",   d["anio_lluvioso"], d["df_lluvioso"], C_LLUV),
-    ]
-    for nombre_esc, anio_esc, df_esc, color in escenarios:
-        td      = df_esc["Demanda (L)"].sum()
-        col_def = "Déficit Diario (L)" if "Déficit Diario (L)" in df_esc.columns else "Deficit Diario (L)"
-        def_    = df_esc[col_def].sum()
-        ts      = td + def_
-        pct     = (ts / td * 100) if td > 0 else 100
-        dsag    = int((df_esc[col_def] < 0).sum())
-        tc      = df_esc["Captado (L)"].sum()
-        lluv    = d["totales_anio"].get(anio_esc, 0)
-
-        pdf.set_fill_color(*color)
-        pdf.set_text_color(*TEXTO)
-        pdf.set_font("Poppins", "B" if "Normal" in nombre_esc else "", 8)
-        pdf.set_xy(10, y)
-        vals   = [nombre_esc, str(anio_esc), f"{lluv:,.0f}", f"{tc:,.0f}",
-                  f"{td:,.0f}", f"{pct:.1f}%", str(dsag)]
-        aligns = ["L", "C", "C", "C", "C", "C", "C"]
-        for v, cw, al in zip(vals, col_ws, aligns):
-            pdf.cell(cw, 8, v, border=0, align=al, fill=True)
-        y += 8
-
-    pdf.set_draw_color(*AZUL_CIELO)
-    pdf.line(10, y, 200, y)
-    y += 5
-
-    # ── SECCIÓN: GRÁFICO NIVEL DEL ESTANQUE ──────────────────
-    y = sec_title(f"NIVEL DEL ESTANQUE - AÑO NORMAL ({d['anio_mediano']})", y)
-    try:
-        chart_img, chart_h_mm = _generar_grafico_estanque_pdf(d["df_normal"], d["capacidad_maxima"])
-        pdf.image(chart_img, x=10, y=y, w=190)
-        y += chart_h_mm + 5
-    except Exception:
-        pdf.set_xy(10, y)
-        pdf.set_font("Poppins", "I", 8)
-        pdf.set_text_color(150, 150, 150)
-        pdf.cell(190, 10, "[Grafico no disponible]", align="C")
-        y += 14
-
-    # ── SECCIÓN: TAMAÑO OPTIMO ────────────────────────────────
-    if y > pdf.h - pdf.b_margin - 50:
-        pdf.add_page()
-        y = 15
-    y = sec_title("TAMANO OPTIMO DEL ESTANQUE (Año Normal)", y)
-
-    curva = d.get("curva_normal") or calcular_curva_optimizacion(d["df_normal"], d["capacidad_maxima"])
-    caps, efs, cap_opt, ef_act, ef_opt = curva
-
-    kpis = [
-        ("Estanque ingresado",            f"{d['capacidad_maxima']:,.0f} L",
-         "Tamano optimo recomendado",     f"{cap_opt:,.0f} L"),
-        ("Cobertura con estanque actual", f"{ef_act:.1f}%",
-         "Cobertura con tamano optimo",   f"{ef_opt:.1f}%"),
-    ]
-    for i, (l1, v1, l2, v2) in enumerate(kpis):
-        bg = ARENA if i % 2 == 0 else BLANCO
-        pdf.set_fill_color(*bg)
-        pdf.set_text_color(*TEXTO)
-        pdf.set_xy(10, y)
-        fit_cell(58, 7, l1, style="B", size=8.5, fill=True)
-        fit_cell(37, 7, v1, style="B", size=8.5, fill=True, color=AZUL_BASE)
-        pdf.set_text_color(*TEXTO)
-        fit_cell(58, 7, l2, style="B", size=8.5, fill=True, color=TEXTO)
-        fit_cell(37, 7, v2, style="B", size=8.5, fill=True, color=AZUL_BASE)
-        y += 7
-
-    # Gráfico curva óptima
-    try:
-        opt_img, opt_h_mm = _generar_grafico_curva_optima_pdf(
-            caps, efs, cap_opt, ef_act, ef_opt, d["capacidad_maxima"]
-        )
-        if y > pdf.h - pdf.b_margin - opt_h_mm - 10:
-            pdf.add_page()
-            y = 15
-        pdf.image(opt_img, x=10, y=y, w=190)
-        y += opt_h_mm + 5
-    except Exception:
-        y += 5
-
-    # ── SECCIÓN: CONCLUSIONES ─────────────────────────────────
-    y = sec_title("CONCLUSIONES Y RECOMENDACIONES", y)
-
-    td_n      = d["df_normal"]["Demanda (L)"].sum()
-    col_def_n = "Déficit Diario (L)" if "Déficit Diario (L)" in d["df_normal"].columns else "Deficit Diario (L)"
-    def_n     = d["df_normal"][col_def_n].sum()
-    pct_n     = ((td_n + def_n) / td_n * 100) if td_n > 0 else 100
-
-    col_def_s = "Déficit Diario (L)" if "Déficit Diario (L)" in d["df_seco"].columns else "Deficit Diario (L)"
-    dsag_s    = int((d["df_seco"][col_def_s] < 0).sum())
-
-    viabilidad = "VIABLE" if pct_n >= 60 else ("PARCIALMENTE VIABLE" if pct_n >= 30 else "NO RECOMENDADO")
-
-    lineas = [
-        (f"Viabilidad general del sistema: {viabilidad}  ({pct_n:.1f}% de cobertura en año normal)", "B"),
-        (f"En el año normal ({d['anio_mediano']}), el sistema cubre el {pct_n:.1f}% de la demanda "
-         f"anual con el estanque actual de {d['capacidad_maxima']:,.0f} L. "
-         f"Los datos corresponden a {d['anio_fin'] - d['anio_inicio'] + 1} años de registros "
-         f"históricos de la estación {d['est_nombre']}.", ""),
-        (f"Para maximizar la eficiencia, se recomienda un estanque de {cap_opt:,.0f} L, "
-         f"con el cual se alcanza una cobertura del {ef_opt:.1f}% en el año normal.", ""),
-        (f"En el año seco (percentil 5, año {d['anio_seco']}), se registran {dsag_s} días sin "
-         f"suministro. Se recomienda disponer de una fuente de abastecimiento complementaria "
-         f"para cubrir estos períodos críticos.", ""),
-        (f"Informe generado el {hoy} con datos del Centro de Ciencia del Clima y la Resiliencia (CR)2.", "I"),
-    ]
-
-    # Fondo Arena para todo el bloque de conclusiones
-    pdf.set_fill_color(*ARENA)
-    pdf.rect(10, y, 190, 60, "F")
-
-    pdf.set_text_color(*TEXTO)
-    for txt, style in lineas:
-        if y > pdf.h - pdf.b_margin - 18:
-            pdf.add_page()
-            y = 15
-        pdf.set_font("Poppins", style, 8.5)
-        pdf.set_xy(13, y)
-        pdf.multi_cell(185, 5.5, txt)
-        y = pdf.get_y() + 3
-
-    return io.BytesIO(pdf.output())
 
 # ===============================================================
 # CSS
@@ -821,7 +358,7 @@ def mostrar_detalles_escenario(df_slice, nombre, key_suffix="", curva_opt=None):
         height=400, margin=dict(t=20, b=50, l=60, r=20),
         plot_bgcolor="rgba(0,0,0,0)", showlegend=False
     )
-    st.plotly_chart(fig_nivel, use_container_width=True,
+    st.plotly_chart(fig_nivel, width="stretch",
                     config={'scrollZoom': False, 'displayModeBar': True},
                     key=f"fig_nivel{key_suffix}")
     st.markdown("---")
@@ -931,7 +468,7 @@ def mostrar_detalles_escenario(df_slice, nombre, key_suffix="", curva_opt=None):
         legend=dict(orientation="h", y=-0.25),
         plot_bgcolor="rgba(0,0,0,0)"
     )
-    st.plotly_chart(fig_opt, use_container_width=True,
+    st.plotly_chart(fig_opt, width="stretch",
                     config={'scrollZoom': False, 'displayModeBar': True},
                     key=f"fig_opt{key_suffix}")
 
@@ -1039,7 +576,7 @@ def mostrar_detalles_escenario(df_slice, nombre, key_suffix="", curva_opt=None):
     }).hide(axis="index")
 
     st.write(f"####  Tabla Diaria de la Simulación")
-    st.dataframe(df_estilizado, use_container_width=True, height=400)
+    st.dataframe(df_estilizado, width="stretch", height=400)
 
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
@@ -1113,7 +650,7 @@ with tab1:
 
                 estacion_cercana = df_estaciones.loc[df_estaciones['Dist'].idxmin()]
                 distancia_minima = estacion_cercana['Dist']
-                cinco_cercanas   = df_est_crudas[df_est_crudas['Codigo'] != estacion_cercana['Codigo']].nsmallest(5, 'Dist')
+                cinco_cercanas   = df_estaciones[df_estaciones['Codigo'] != estacion_cercana['Codigo']].nsmallest(5, 'Dist')
                 codigo_estacion  = str(estacion_cercana['Codigo'])
 
                 lluvias_mensuales = df_mensual[['Año_Mes', 'Año', codigo_estacion]].copy()
@@ -1134,7 +671,7 @@ with tab1:
                 # Calculamos el desnivel real (positivo si el proyecto está más alto)
                 desnivel_real = (alt_proyecto - alt_estacion) if not pd.isna(alt_estacion) else 0.0
                 desnivel_abs = abs(desnivel_real)
-                desnivel = desnivel_abs
+                desnivel = desnivel_real
                 
                 # Fórmula del Gradiente Orográfico
                 variacion_pct = (coef_orografico / 100.0) * (desnivel_real / 100.0)
@@ -1179,26 +716,26 @@ with tab1:
 
                 # --- Mapa ---
                 fig_mapa = go.Figure()
-                fig_mapa.add_trace(go.Scattermapbox(
+                fig_mapa.add_trace(go.Scattermap(
                     lat=cinco_cercanas['Latitud'].tolist(), lon=cinco_cercanas['Longitud'].tolist(),
                     mode='markers+text', marker=dict(size=10, color='#888888'),
                     text=cinco_cercanas['Nombre'].tolist(), textposition='top right',
                     name='Estaciones cercanas', hovertemplate='%{text}<extra></extra>'
                 ))
-                fig_mapa.add_trace(go.Scattermapbox(
+                fig_mapa.add_trace(go.Scattermap(
                     lat=[estacion_cercana['Latitud']], lon=[estacion_cercana['Longitud']],
                     mode='markers+text', marker=dict(size=14, color='#0000FF'),
                     text=[estacion_cercana['Nombre']], textposition='top right',
                     name='Estación seleccionada', hovertemplate='%{text}<extra></extra>'
                 ))
-                fig_mapa.add_trace(go.Scattermapbox(
+                fig_mapa.add_trace(go.Scattermap(
                     lat=[lat_proyecto], lon=[lon_proyecto],
                     mode='markers+text', marker=dict(size=14, color='#FF0000'),
                     text=[nombre_proyecto], textposition='top right',
                     name='Tu Proyecto', hovertemplate='%{text}<extra></extra>'
                 ))
                 fig_mapa.update_layout(
-                    mapbox=dict(
+                    map=dict(
                         style='open-street-map',
                         center=dict(lat=(lat_proyecto + estacion_cercana['Latitud']) / 2,
                                     lon=(lon_proyecto + estacion_cercana['Longitud']) / 2),
@@ -1207,7 +744,7 @@ with tab1:
                     margin=dict(l=0, r=0, t=0, b=0), height=350,
                     legend=dict(orientation='h', y=-0.08)
                 )
-                st.plotly_chart(fig_mapa, use_container_width=True,
+                st.plotly_chart(fig_mapa, width="stretch",
                                 config={'scrollZoom': False, 'displayModeBar': True})
 
                 # --- Simulación continua ---
@@ -1246,7 +783,7 @@ with tab1:
                                        xaxis_title="Línea de Tiempo Histórica",
                                        margin=dict(b=40))
                 fig_cont.update_traces(hovertemplate="<b>%{x}</b><br>Nivel: %{y:,.0f} L<extra></extra>")
-                st.plotly_chart(fig_cont, use_container_width=True,
+                st.plotly_chart(fig_cont, width="stretch",
                                 config={'scrollZoom': False, 'displayModeBar': True})
 
                 # --- Escenarios reales ---
@@ -1322,7 +859,7 @@ with tab1:
                     height=420, margin=dict(t=20, b=60, l=60, r=20),
                     legend=dict(orientation="h", y=-0.15), plot_bgcolor="rgba(0,0,0,0)"
                 )
-                st.plotly_chart(fig_comp, use_container_width=True,
+                st.plotly_chart(fig_comp, width="stretch",
                                 config={'scrollZoom': False, 'displayModeBar': True})
 
                 # --- Detalle por escenario ---
@@ -1366,11 +903,12 @@ with tab1:
                     'est_nombre':             estacion_cercana['Nombre'],
                     'est_codigo':             codigo_estacion,
                     'est_altitud':            alt_estacion if not pd.isna(alt_estacion) else "—",
-                    'desnivel':               round(desnivel) if not pd.isna(alt_estacion) else "—",
+                    'desnivel':               round(desnivel) if not pd.isna(alt_estacion) else "—",   # con signo: + = proyecto sobre la estación
                     'distancia':              distancia_minima,
                     'anio_inicio':            anio_inicio,
                     'anio_fin':               anio_fin,
                     'pct_calidad':            porcentaje_calidad,
+                    'multiplicador_lluvia':   multiplicador_lluvia,
                     'anio_seco':              anio_seco,
                     'anio_mediano':           anio_mediano,
                     'anio_lluvioso':          anio_lluvioso,
@@ -1438,6 +976,7 @@ with tab2:
         fila_promedio      = pd.Series(precipitaciones_promedio + [sum(precipitaciones_promedio)],
                                        index=pivot.columns, name='📊 Promedio')
         pivot_con_promedio = pd.concat([pivot, fila_promedio.to_frame().T])
+        pivot_con_promedio.index = pivot_con_promedio.index.astype(str)   # años + «📊 Promedio»: sin tipos mezclados (pyarrow)
 
         def estilo_pivot(val):
             return 'background-color: #f0f0f0; color: #999999; font-style: italic' if pd.isna(val) else ''
@@ -1450,7 +989,7 @@ with tab2:
                             .map(estilo_pivot)
                             .apply(estilo_fila_promedio, axis=1)
                             .format(lambda x: formato_chileno(x, 0) if not pd.isna(x) else '—'))
-        st.dataframe(pivot_estilizado, use_container_width=True)
+        st.dataframe(pivot_estilizado, width="stretch")
 
         st.markdown("####  Total anual de precipitación por año")
         totales_anuales = df_pp.groupby('Año')['PP (mm)'].sum(min_count=1).reset_index().dropna(subset=['PP (mm)'])
@@ -1461,7 +1000,7 @@ with tab2:
                        annotation_position="top left")
         fig2.update_layout(yaxis_title="Precipitación total (mm)", xaxis_title="",
                            coloraxis_showscale=False)
-        st.plotly_chart(fig2, use_container_width=True,
+        st.plotly_chart(fig2, width="stretch",
                         config={'scrollZoom': False, 'displayModeBar': True})
 
         st.markdown("####  Promedio mensual histórico (Climograma)")
@@ -1470,7 +1009,7 @@ with tab2:
                       color_continuous_scale='Blues')
         fig3.update_layout(yaxis_title="Precipitación promedio (mm)", xaxis_title="",
                            coloraxis_showscale=False)
-        st.plotly_chart(fig3, use_container_width=True,
+        st.plotly_chart(fig3, width="stretch",
                         config={'scrollZoom': False, 'displayModeBar': True})
 
 # ===============================================================
@@ -1514,7 +1053,7 @@ with tab3:
         ]
 
         LAYOUT_MAPA = dict(
-            mapbox=dict(style='open-street-map', center=dict(lat=-37.0, lon=-71.5), zoom=4),
+            map=dict(style='open-street-map', center=dict(lat=-37.0, lon=-71.5), zoom=4),
             margin=dict(l=0, r=0, t=0, b=0), height=680,
             legend=dict(
                 yanchor="top", y=0.99, xanchor="left", x=0.01,
@@ -1532,7 +1071,7 @@ with tab3:
 
         with maptab1:
             fig_nac = go.Figure()
-            fig_nac.add_trace(go.Choroplethmapbox(
+            fig_nac.add_trace(go.Choroplethmap(
                 geojson=_geojson_tri,
                 locations=_ids_tri,
                 z=_vals_tri,
@@ -1551,7 +1090,7 @@ with tab3:
                 name="Precipitación",
             ))
             # Estaciones como puntos de referencia
-            fig_nac.add_trace(go.Scattermapbox(
+            fig_nac.add_trace(go.Scattermap(
                 lat=df_mapa_nac['Latitud'], lon=df_mapa_nac['Longitud'],
                 mode='markers',
                 marker=dict(size=4, color='rgba(21,20,52,0.55)'),
@@ -1560,7 +1099,7 @@ with tab3:
                 name="Estaciones CR2",
             ))
             fig_nac.update_layout(**LAYOUT_MAPA)
-            st.plotly_chart(fig_nac, use_container_width=True, config={'scrollZoom': True})
+            st.plotly_chart(fig_nac, width="stretch", config={'scrollZoom': True})
 
             st.info(
                 "**¿Cómo leer el mapa?**  Cada zona triangulada entre estaciones muestra la "
@@ -1597,7 +1136,7 @@ with tab3:
                 )
 
                 fig_dyn = go.Figure()
-                fig_dyn.add_trace(go.Choroplethmapbox(
+                fig_dyn.add_trace(go.Choroplethmap(
                     geojson=_geojson_tri,
                     locations=_ids_tri,
                     z=vals_cob,
@@ -1615,7 +1154,7 @@ with tab3:
                     hovertemplate="<b>Cobertura estimada:</b> %{z:.1f}%<extra></extra>",
                     name="Cobertura",
                 ))
-                fig_dyn.add_trace(go.Scattermapbox(
+                fig_dyn.add_trace(go.Scattermap(
                     lat=df_mapa_nac['Latitud'], lon=df_mapa_nac['Longitud'],
                     mode='markers',
                     marker=dict(size=4, color='rgba(21,20,52,0.55)'),
@@ -1626,7 +1165,7 @@ with tab3:
 
                 if 'informe_datos' in st.session_state:
                     id_ = st.session_state['informe_datos']
-                    fig_dyn.add_trace(go.Scattermapbox(
+                    fig_dyn.add_trace(go.Scattermap(
                         lat=[id_['lat_proyecto']], lon=[id_['lon_proyecto']],
                         mode='markers+text',
                         marker=dict(size=14, color='#151434'),
@@ -1637,7 +1176,7 @@ with tab3:
                     ))
 
                 fig_dyn.update_layout(**LAYOUT_MAPA)
-                st.plotly_chart(fig_dyn, use_container_width=True, config={'scrollZoom': True})
+                st.plotly_chart(fig_dyn, width="stretch", config={'scrollZoom': True})
 
                 st.info(
                     "La cobertura se estima como **(PP media × techo × eficiencia) ÷ demanda anual**. "
@@ -1693,8 +1232,8 @@ with tab4:
                                     pdf_z = generar_informe_pdf(datos_z)
                                     nombre_z = (row_z.get('nombre_proyecto') or 'proyecto').replace(' ', '_')
                                     zf.writestr(f"{nombre_z}_{int(row_z['id'])}.pdf", pdf_z.read())
-                                except Exception:
-                                    pass
+                                except Exception as e_z:
+                                    st.warning(f"No se pudo generar el PDF de {row_z.get('nombre_proyecto','?')}: {e_z}")
                     zip_buf.seek(0)
                     st.download_button(
                         label="⬇️ Guardar ZIP",
@@ -1762,7 +1301,7 @@ with tab4:
                                 with st.spinner("Generando PDF..."):
                                     datos_pdf = cargar_simulacion_completa(sim_id)
                                 if datos_pdf:
-                                    st.session_state[f'pdf_bytes_{sim_id}'] = generar_informe_pdf(datos_pdf)
+                                    st.session_state[f'pdf_bytes_{sim_id}'] = generar_informe_pdf(datos_pdf).getvalue()
                                     st.session_state[f'pdf_nombre_{sim_id}'] = datos_pdf.get('nombre_proyecto', 'proyecto')
                             pdf_bytes = st.session_state.get(f'pdf_bytes_{sim_id}')
                             if pdf_bytes:
@@ -1822,7 +1361,7 @@ with tab5:
             st.markdown("**Mapa de proyectos simulados**")
             df_mapa = df_dash.dropna(subset=['lat_proyecto', 'lon_proyecto'])
             if not df_mapa.empty:
-                fig_mapa = go.Figure(go.Scattermapbox(
+                fig_mapa = go.Figure(go.Scattermap(
                     lat=df_mapa['lat_proyecto'],
                     lon=df_mapa['lon_proyecto'],
                     mode='markers',
@@ -1833,10 +1372,10 @@ with tab5:
                     hovertemplate='%{text}<extra></extra>',
                 ))
                 fig_mapa.update_layout(
-                    mapbox=dict(style='carto-positron', center=dict(lat=-35, lon=-71), zoom=4),
+                    map=dict(style='carto-positron', center=dict(lat=-35, lon=-71), zoom=4),
                     height=450, margin=dict(l=0, r=0, t=0, b=0),
                 )
-                st.plotly_chart(fig_mapa, use_container_width=True)
+                st.plotly_chart(fig_mapa, width="stretch")
             else:
                 st.info("No hay proyectos con coordenadas para mostrar en el mapa.")
 
@@ -1860,5 +1399,5 @@ if 'informe_datos' in st.session_state:
         file_name=f"Informe_SCALL_{nombre_archivo}.pdf",
         mime="application/pdf",
         type="primary",
-        use_container_width=True,
+        width="stretch",
     )

@@ -47,7 +47,7 @@ app_scall.py    (UI Streamlit, gráficos Plotly, generación PDF)
 - La simulación completa se ejecuta dentro del bloque `if st.button(...)` y guarda resultados en `st.session_state` para que Tab 2 y el PDF los consuman sin re-calcular.
 - El PDF final se cachea en `st.session_state['_pdf_cache']` (bytes) y se invalida al recalcular o al cargar otra simulación del historial — no regenerarlo en cada rerun.
 - El mapa nacional (Tab 3) está gateado tras el botón "Generar mapa nacional" (`_mapa_nacional_activo` en session_state) porque los tabs de Streamlit no son lazy y la triangulación de Delaunay es pesada.
-- `generar_informe_pdf(d)` usa fpdf2 para construir un PDF de una página en memoria (`io.BytesIO`), incluye logo `Logo_Amulen.png` si existe.
+- `informe_pdf.generar_informe_pdf(d)` (módulo `informe_pdf.py`) construye con fpdf2 un PDF de 3 páginas en memoria (`io.BytesIO`): portada tipo afiche con dibujo del sistema y 4 tarjetas de resultado, datos y escenarios con el nivel real del estanque, y tamaño óptimo con conclusiones. Usa `assets/Logo_Amulen_blanco_hd.png` y Poppins.
 - `mostrar_detalles_escenario(df_slice, nombre, key_suffix)` es la función de visualización principal: KPIs, gráfico de nivel, curva de optimización, seguridad hídrica, tabla diaria y botón de exportación Excel.
 
 ### Datos de entrada

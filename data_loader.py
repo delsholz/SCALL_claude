@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -7,7 +8,7 @@ from utils import arreglar_coordenada
 
 @st.cache_data(ttl=3600)
 def cargar_datos_crudos(anio_inicio="2000", anio_fin="2020"):
-    archivo_cr2 = "data/cr2_prDaily_2020.txt.gz"
+    archivo_cr2 = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "cr2_prDaily_2020.txt.gz")
     try:
         df_meta = pd.read_csv(archivo_cr2, sep=',', nrows=15, header=None, dtype=str, low_memory=False)
     except FileNotFoundError:
