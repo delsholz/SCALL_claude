@@ -9,6 +9,7 @@ Credenciales (en orden de prioridad):
 import io
 import json
 import os
+import re
 import numpy as np
 import pandas as pd
 import requests
@@ -46,6 +47,27 @@ def _base_url():
 def _supabase_disponible():
     url, key = _get_supabase_config()
     return bool(url and key)
+
+
+ANONIMO = "Anónimo"
+
+
+def normalizar_usuario(usuario):
+    """Nombre sin espacios sobrantes (inicio, fin y repetidos). Vacío -> «Anónimo»."""
+    limpio = " ".join(str(usuario or "").split())
+    return limpio or ANONIMO
+
+
+def _filtro_usuario(usuario, incluir_anonimas=False):
+    """Parámetros PostgREST para buscar las simulaciones de `usuario` SIN distinguir mayúsculas ni tildes de caso
+    (ilike), y opcionalmente también las guardadas sin nombre. Los caracteres que PostgREST usa como sintaxis
+    (* % , ( ) y la barra invertida) se reemplazan por espacios para que un nombre raro no rompa la consulta."""
+    nombre = normalizar_usuario(usuario)
+    seguro = re.sub(r'[*%,()\\]', ' ', nombre)
+    seguro = " ".join(seguro.split())
+    if incluir_anonimas and nombre != ANONIMO:
+        return {'or': f'(usuario.ilike.{seguro},usuario.eq.{ANONIMO})'}
+    return {'usuario': f'ilike.{seguro}'}
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +237,7 @@ def guardar_simulacion(informe_datos, usuario=None):
         est_alt = d.get('est_altitud')
 
         row = {
-            'usuario': usuario or 'Anónimo',
+            'usuario': normalizar_usuario(usuario),
             'nombre_proyecto': d.get('nombre_proyecto'),
             'lat_proyecto': d.get('lat_proyecto'),
             'lon_proyecto': d.get('lon_proyecto'),
@@ -267,60 +289,49 @@ def _json_default(obj):
     raise TypeError(f"No serializable: {type(obj)}")
 
 
-def cargar_historial(usuario=None):
-    """Retorna DataFrame con metadatos de simulaciones filtradas por usuario."""
+def cargar_historial_con_estado(usuario=None, incluir_anonimas=False, limite=500):
+    """Metadatos de las simulaciones de `usuario` (sin distinguir mayúsculas), de la más nueva a la más antigua.
+
+    Retorna (DataFrame, error). `error` es None si todo salió bien y un texto en castellano si falló (sin conexión,
+    credenciales malas, tabla inexistente…): así la pantalla puede decirlo en vez de mostrar «aún no tienes simulaciones».
+    """
     if not _supabase_disponible():
-        return pd.DataFrame()
+        return pd.DataFrame(), "No hay credenciales de Supabase configuradas."
     try:
         cols = (
             'id,fecha_simulacion,usuario,nombre_proyecto,est_nombre,est_codigo,'
             'techo,capacidad_maxima,numero_personas,pct_cubierto_normal,'
             'dias_sin_agua_normal,cap_optima,anio_seco,anio_mediano,anio_lluvioso'
         )
-        params = {'select': cols, 'order': 'fecha_simulacion.desc'}
+        params = {'select': cols, 'order': 'fecha_simulacion.desc', 'limit': str(limite)}
         if usuario:
-            params['usuario'] = f'eq.{usuario}'
-        resp = requests.get(
-            _base_url(),
-            headers={**_headers(), "Prefer": ""},
-            params=params,
-            timeout=10,
-        )
+            params.update(_filtro_usuario(usuario, incluir_anonimas))
+        resp = requests.get(_base_url(), headers={**_headers(), "Prefer": ""}, params=params, timeout=12)
         if not resp.ok:
-            return pd.DataFrame()
+            return pd.DataFrame(), f"Supabase respondió {resp.status_code}: {resp.text[:200]}"
         data = resp.json()
         if not data:
-            return pd.DataFrame()
+            return pd.DataFrame(), None
         df = pd.DataFrame(data)
-        df['fecha_simulacion'] = pd.to_datetime(df['fecha_simulacion'])
-        return df
-    except Exception:
-        return pd.DataFrame()
+        fechas = pd.to_datetime(df['fecha_simulacion'], utc=True, errors='coerce')
+        try:
+            fechas = fechas.dt.tz_convert('America/Santiago')       # la base guarda UTC: mostrar la hora de Chile
+        except Exception:
+            pass
+        df['fecha_simulacion'] = fechas
+        return df, None
+    except requests.exceptions.Timeout:
+        return pd.DataFrame(), "Supabase tardó demasiado en responder. Intenta de nuevo en un momento."
+    except requests.exceptions.ConnectionError:
+        return pd.DataFrame(), "No hay conexión con Supabase."
+    except Exception as e:
+        return pd.DataFrame(), f"No se pudo leer el historial: {e}"
 
 
-def cargar_datos_dashboard():
-    """Retorna DataFrame con datos de TODAS las simulaciones para el dashboard."""
-    if not _supabase_disponible():
-        return pd.DataFrame()
-    try:
-        cols = (
-            'id,fecha_simulacion,usuario,nombre_proyecto,'
-            'lat_proyecto,lon_proyecto,est_nombre,'
-            'pct_cubierto_normal,cap_optima,capacidad_maxima,techo'
-        )
-        resp = requests.get(
-            _base_url(),
-            headers={**_headers(), "Prefer": ""},
-            params={'select': cols, 'order': 'fecha_simulacion.asc'},
-            timeout=15,
-        )
-        if not resp.ok or not resp.json():
-            return pd.DataFrame()
-        df = pd.DataFrame(resp.json())
-        df['fecha_simulacion'] = pd.to_datetime(df['fecha_simulacion'])
-        return df
-    except Exception:
-        return pd.DataFrame()
+def cargar_historial(usuario=None):
+    """Compatibilidad: solo el DataFrame (vacío si hubo error)."""
+    df, _ = cargar_historial_con_estado(usuario)
+    return df
 
 
 def cargar_simulacion_completa(sim_id):

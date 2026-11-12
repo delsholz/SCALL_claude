@@ -13,9 +13,8 @@ from simulator import (simular_continua, simular_escenario,
                        encontrar_anios_extremos, calcular_curva_optimizacion)
 
 try:
-    from history import (guardar_simulacion, cargar_historial,
-                         cargar_simulacion_completa, eliminar_simulacion,
-                         cargar_datos_dashboard)
+    from history import (guardar_simulacion, cargar_historial_con_estado, normalizar_usuario,
+                         cargar_simulacion_completa, eliminar_simulacion)
     _HISTORIAL_DISPONIBLE = True
 except Exception:
     _HISTORIAL_DISPONIBLE = False
@@ -593,7 +592,7 @@ def mostrar_detalles_escenario(df_slice, nombre, key_suffix="", curva_opt=None):
 # ===============================================================
 # TABS
 # ===============================================================
-tab1, tab2, tab3, tab4, tab5 = st.tabs([" Simulación Histórica y Escenarios", " Resumen Mensual Histórico", " Mapa de Factibilidad Nacional", "Historial", "Dashboard"])
+tab1, tab2, tab3, tab4 = st.tabs([" Simulación Histórica y Escenarios", " Resumen Mensual Histórico", " Mapa de Factibilidad Nacional", "Historial"])
 
 if 'simulacion_calculada' not in st.session_state:
     st.session_state.simulacion_calculada = False
@@ -923,12 +922,14 @@ with tab1:
 
                 if _HISTORIAL_DISPONIBLE and not st.session_state.get('_sim_guardada', False):
                     try:
-                        if guardar_simulacion(st.session_state['informe_datos'], usuario=usuario or "Anónimo"):
+                        if guardar_simulacion(st.session_state['informe_datos'], usuario=usuario):
                             st.session_state['_sim_guardada'] = True
                             st.toast("✓ Simulación guardada en historial", icon="💾")
                             st.session_state.pop('_hist_cache', None)
+                        else:
+                            st.toast("No se pudo guardar en el historial (la simulación sí se calculó).", icon="⚠️")
                     except Exception:
-                        pass
+                        st.toast("No se pudo guardar en el historial (la simulación sí se calculó).", icon="⚠️")
 
         except Exception as e:
             st.error(f"⚠️ **Error inesperado en el cálculo:** {e}")
@@ -1191,42 +1192,75 @@ with tab3:
 with tab4:
     st.markdown("### 🕓 Historial de Simulaciones")
 
+    def _hay(v):
+        """True si el valor existe (la base devuelve NaN cuando falta un dato)."""
+        return v is not None and not pd.isna(v)
+
     if not _HISTORIAL_DISPONIBLE:
         st.warning("⚠️ Historial no disponible. Configura las credenciales de Supabase en `.streamlit/secrets.toml`.")
-    elif not usuario:
+    elif not (usuario or "").strip():
         st.info("👤 Ingresa tu nombre en el panel izquierdo para ver tu historial de simulaciones.")
     else:
-        st.markdown(f"Mostrando simulaciones de **{usuario}**")
+        usuario_n = normalizar_usuario(usuario)
+        st.markdown(f"Mostrando simulaciones de **{usuario_n}** (no importan las mayúsculas ni los espacios sobrantes).")
 
-        # Limpiar cache si el usuario cambió de nombre
-        if st.session_state.get('_hist_usuario') != usuario:
-            st.session_state.pop('_hist_cache', None)
-            st.session_state['_hist_usuario'] = usuario
+        if st.session_state.get('_hist_flash'):
+            st.success(st.session_state.pop('_hist_flash'))
 
-        if st.button("🔄 Actualizar historial", key="btn_refresh_hist"):
+        f1, f2 = st.columns([3, 2])
+        busqueda = f1.text_input("🔎 Buscar por proyecto o estación", key="hist_busqueda", placeholder="Ej: Crucero, Quilaco…")
+        orden = f2.selectbox("Ordenar por", ["Más recientes primero", "Más antiguas primero",
+                                             "Mayor cobertura", "Nombre del proyecto"], key="hist_orden")
+        g1, g2 = st.columns([3, 2])
+        incluir_anon = g1.checkbox(
+            "Incluir simulaciones guardadas sin nombre («Anónimo»)", key="hist_anon",
+            help="Si corriste una simulación antes de escribir tu nombre en el panel izquierdo, quedó guardada como «Anónimo».")
+        if g2.button("🔄 Actualizar historial", key="btn_refresh_hist"):
             st.session_state.pop('_hist_cache', None)
             st.rerun()
 
+        # Se vuelve a pedir a la base solo si cambió el nombre o el interruptor de «Anónimo»
+        clave_hist = (usuario_n.lower(), bool(incluir_anon))
+        if st.session_state.get('_hist_clave') != clave_hist:
+            st.session_state.pop('_hist_cache', None)
+            st.session_state['_hist_clave'] = clave_hist
         if '_hist_cache' not in st.session_state:
             with st.spinner("Cargando historial..."):
-                st.session_state['_hist_cache'] = cargar_historial(usuario=usuario)
+                st.session_state['_hist_cache'] = cargar_historial_con_estado(usuario_n, incluir_anon)
+        df_hist, error_hist = st.session_state['_hist_cache']
 
-        df_hist = st.session_state['_hist_cache']
-
-        if df_hist.empty:
-            st.info("Aún no tienes simulaciones guardadas. Ejecuta una simulación y se guardará automáticamente.")
+        if error_hist:
+            st.error(f"No se pudo cargar el historial: {error_hist}")
+            st.caption("Tus simulaciones no se perdieron. Pulsa «Actualizar historial» para reintentar.")
+        elif df_hist.empty:
+            st.info("No hay simulaciones guardadas con este nombre. Ejecuta una simulación y se guardará sola. "
+                    "Si ya corriste una sin escribir tu nombre, marca «Incluir simulaciones guardadas sin nombre».")
         else:
-            col_titulo, col_zip = st.columns([3, 1])
-            col_titulo.write(f"**{len(df_hist)} simulación(es) guardada(s)**")
+            df_v = df_hist.copy()
+            if busqueda.strip():
+                q = busqueda.strip().lower()
+                df_v = df_v[df_v['nombre_proyecto'].fillna('').str.lower().str.contains(q, regex=False)
+                            | df_v['est_nombre'].fillna('').str.lower().str.contains(q, regex=False)]
+            if orden == "Más antiguas primero":
+                df_v = df_v.sort_values('fecha_simulacion', ascending=True)
+            elif orden == "Mayor cobertura":
+                df_v = df_v.sort_values('pct_cubierto_normal', ascending=False, na_position='last')
+            elif orden == "Nombre del proyecto":
+                df_v = df_v.sort_values('nombre_proyecto', key=lambda c: c.fillna('').str.lower())
 
+            col_titulo, col_zip = st.columns([3, 1])
+            col_titulo.write(f"**{len(df_v)} de {len(df_hist)} simulación(es)**")
+
+            ZIP_MAX = 25
             with col_zip:
-                if st.button("📦 Descargar todo (ZIP)", key="btn_zip"):
+                if st.button(f"📦 ZIP de PDFs (máx. {ZIP_MAX})", key="btn_zip", disabled=df_v.empty):
                     import zipfile, io as _io
                     zip_buf = _io.BytesIO()
+                    lote = df_v.head(ZIP_MAX)
+                    barra = st.progress(0.0, text="Generando PDFs…")
                     with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-                        for _, row_z in df_hist.iterrows():
-                            with st.spinner(f"Generando PDF {row_z.get('nombre_proyecto','?')}..."):
-                                datos_z = cargar_simulacion_completa(int(row_z['id']))
+                        for k, (_, row_z) in enumerate(lote.iterrows(), 1):
+                            datos_z = cargar_simulacion_completa(int(row_z['id']))
                             if datos_z:
                                 try:
                                     pdf_z = generar_informe_pdf(datos_z)
@@ -1234,29 +1268,33 @@ with tab4:
                                     zf.writestr(f"{nombre_z}_{int(row_z['id'])}.pdf", pdf_z.read())
                                 except Exception as e_z:
                                     st.warning(f"No se pudo generar el PDF de {row_z.get('nombre_proyecto','?')}: {e_z}")
-                    zip_buf.seek(0)
-                    st.download_button(
-                        label="⬇️ Guardar ZIP",
-                        data=zip_buf,
-                        file_name=f"SCALL_{usuario}_informes.zip",
-                        mime="application/zip",
-                        key="btn_zip_download",
-                    )
+                            barra.progress(k / len(lote), text=f"Generando PDFs… {k} de {len(lote)}")
+                    barra.empty()
+                    st.session_state['_zip_bytes'] = zip_buf.getvalue()
+                    st.session_state['_zip_nombre'] = f"SCALL_{usuario_n.replace(' ', '_')}_informes.zip"
+                if st.session_state.get('_zip_bytes'):
+                    st.download_button("⬇️ Guardar ZIP", data=st.session_state['_zip_bytes'],
+                                       file_name=st.session_state.get('_zip_nombre', 'SCALL_informes.zip'),
+                                       mime="application/zip", key="btn_zip_download")
+            if len(df_v) > ZIP_MAX:
+                st.caption(f"El ZIP incluye las primeras {ZIP_MAX} de la lista actual (filtra o busca para elegir cuáles).")
 
-            for _, row in df_hist.iterrows():
+            n_mostrar = st.session_state.get('_hist_n', 15)
+            for _, row in df_v.head(n_mostrar).iterrows():
                 sim_id   = int(row['id'])
-                fecha    = row['fecha_simulacion'].strftime('%d/%m/%Y %H:%M')
+                fecha    = row['fecha_simulacion'].strftime('%d/%m/%Y %H:%M') if _hay(row['fecha_simulacion']) else '—'
                 proyecto = row.get('nombre_proyecto') or '—'
                 estacion = row.get('est_nombre') or '—'
                 pct      = row.get('pct_cubierto_normal')
                 dias     = row.get('dias_sin_agua_normal')
                 cap_opt  = row.get('cap_optima')
 
-                pct_str    = f"{pct:.1f}%" if pct is not None else "—"
-                dias_str   = str(int(dias)) if dias is not None else "—"
-                cap_str    = f"{formato_chileno(cap_opt, 0)} L" if cap_opt is not None else "—"
+                pct_str  = f"{pct:.1f}%" if _hay(pct) else "—"
+                dias_str = str(int(dias)) if _hay(dias) else "—"
+                cap_str  = f"{formato_chileno(cap_opt, 0)} L" if _hay(cap_opt) else "—"
+                sin_nombre = " · 👤 sin nombre" if str(row.get('usuario', '')).strip().lower() == 'anónimo' else ""
 
-                with st.expander(f"**{proyecto}** — {fecha} · {estacion}", expanded=False):
+                with st.expander(f"**{proyecto}** — {fecha} · {estacion}{sin_nombre}", expanded=False):
                     m1, m2, m3 = st.columns(3)
                     m1.metric("Cobertura año normal", pct_str)
                     m2.metric("Días sin agua (normal)", dias_str)
@@ -1285,15 +1323,18 @@ with tab4:
                                 }
                                 st.session_state['simulacion_desde_historial'] = True
                                 st.session_state.simulacion_calculada = False
-                                st.session_state.pop('_hist_cache', None)
+                                st.session_state['_hist_flash'] = (
+                                    f"📂 Cargada «{proyecto}». Ve a la pestaña «Simulación Histórica y Escenarios» "
+                                    "para verla; el PDF se descarga al final de esa página.")
                                 st.session_state.pop('_pdf_cache', None)
                                 st.rerun()
                             else:
-                                st.error("No se pudo cargar la simulación.")
+                                st.error("No se pudo cargar la simulación (la base no respondió o el registro está dañado). "
+                                         "Intenta de nuevo; si sigue igual, vuelve a correrla.")
 
                     with b2:
                         if st.button("📄 Generar PDF", key=f"pdf_btn_{sim_id}"):
-                            st.session_state[f'pdf_solicitado'] = sim_id
+                            st.session_state['pdf_solicitado'] = sim_id
                             st.session_state.pop(f'pdf_bytes_{sim_id}', None)
 
                         if st.session_state.get('pdf_solicitado') == sim_id:
@@ -1303,9 +1344,11 @@ with tab4:
                                 if datos_pdf:
                                     st.session_state[f'pdf_bytes_{sim_id}'] = generar_informe_pdf(datos_pdf).getvalue()
                                     st.session_state[f'pdf_nombre_{sim_id}'] = datos_pdf.get('nombre_proyecto', 'proyecto')
+                                else:
+                                    st.error("No se pudo leer la simulación para armar el PDF.")
                             pdf_bytes = st.session_state.get(f'pdf_bytes_{sim_id}')
                             if pdf_bytes:
-                                nombre_pdf = st.session_state.get(f'pdf_nombre_{sim_id}', 'proyecto').replace(' ', '_')
+                                nombre_pdf = (st.session_state.get(f'pdf_nombre_{sim_id}') or 'proyecto').replace(' ', '_')
                                 st.download_button(
                                     label="⬇️ Descargar PDF",
                                     data=pdf_bytes,
@@ -1319,65 +1362,18 @@ with tab4:
                             st.session_state[f'confirmar_eliminar_{sim_id}'] = True
                         if st.session_state.get(f'confirmar_eliminar_{sim_id}', False):
                             if st.button("¿Confirmar eliminación?", key=f"confirm_{sim_id}", type="primary"):
-                                eliminar_simulacion(sim_id)
+                                if eliminar_simulacion(sim_id):
+                                    st.toast("Simulación eliminada", icon="🗑️")
+                                else:
+                                    st.toast("No se pudo eliminar. Intenta de nuevo.", icon="⚠️")
                                 st.session_state.pop(f'confirmar_eliminar_{sim_id}', None)
                                 st.session_state.pop('_hist_cache', None)
-                                st.toast("Simulación eliminada", icon="🗑️")
                                 st.rerun()
 
-
-# ===============================================================
-# TAB 5 — DASHBOARD DE USO
-# ===============================================================
-with tab5:
-    st.markdown("### 📊 Dashboard de Uso — SCALL Amulén")
-
-    if not _HISTORIAL_DISPONIBLE:
-        st.warning("⚠️ Historial no disponible. Configura las credenciales de Supabase.")
-    else:
-        if st.button("🔄 Actualizar dashboard", key="btn_refresh_dash"):
-            st.session_state.pop('_dash_cache', None)
-            st.rerun()
-
-        if '_dash_cache' not in st.session_state:
-            with st.spinner("Cargando datos..."):
-                st.session_state['_dash_cache'] = cargar_datos_dashboard()
-
-        df_dash = st.session_state['_dash_cache']
-
-        if df_dash.empty:
-            st.info("Aún no hay simulaciones guardadas. Ejecuta la primera simulación para ver estadísticas.")
-        else:
-            total = len(df_dash)
-            usuarios_unicos = df_dash['usuario'].nunique()
-
-            k1, k2 = st.columns(2)
-            k1.metric("Total simulaciones", total)
-            k2.metric("Usuarios activos", usuarios_unicos)
-
-            st.markdown("---")
-
-            # Mapa de proyectos
-            st.markdown("**Mapa de proyectos simulados**")
-            df_mapa = df_dash.dropna(subset=['lat_proyecto', 'lon_proyecto'])
-            if not df_mapa.empty:
-                fig_mapa = go.Figure(go.Scattermap(
-                    lat=df_mapa['lat_proyecto'],
-                    lon=df_mapa['lon_proyecto'],
-                    mode='markers',
-                    marker=dict(size=10, color='#2e68b1', opacity=0.85),
-                    text=df_mapa.apply(
-                        lambda r: f"{r.get('nombre_proyecto','—')} ({r.get('usuario','—')})", axis=1
-                    ),
-                    hovertemplate='%{text}<extra></extra>',
-                ))
-                fig_mapa.update_layout(
-                    map=dict(style='carto-positron', center=dict(lat=-35, lon=-71), zoom=4),
-                    height=450, margin=dict(l=0, r=0, t=0, b=0),
-                )
-                st.plotly_chart(fig_mapa, width="stretch")
-            else:
-                st.info("No hay proyectos con coordenadas para mostrar en el mapa.")
+            if len(df_v) > n_mostrar:
+                if st.button(f"Mostrar más ({len(df_v) - n_mostrar} restantes)", key="btn_hist_mas"):
+                    st.session_state['_hist_n'] = n_mostrar + 15
+                    st.rerun()
 
 
 # ===============================================================

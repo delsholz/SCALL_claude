@@ -100,6 +100,21 @@ def _metricas_escenario(df, totales, anio):
     }
 
 
+def _simular_capacidad(df, capacidad):
+    """Cobertura (%) y días sin agua de un escenario con un estanque de `capacidad` L.
+    Misma recursión diaria que simulator.calcular_curva_optimizacion (el estanque parte vacío)."""
+    nivel, usada_tot, dias = 0.0, 0.0, 0
+    for captado, demanda in zip(df["Captado (L)"].values, df["Demanda (L)"].values):
+        disp = min(nivel + float(captado), float(capacidad))
+        usada = min(disp, float(demanda))
+        nivel = max(0.0, disp - float(demanda))
+        usada_tot += usada
+        if demanda > 0 and usada < demanda - 1e-9:
+            dias += 1
+    td = float(df["Demanda (L)"].sum())
+    return {"cobertura": (usada_tot / td * 100) if td > 0 else 100.0, "dias_sin_agua": dias}
+
+
 def _desnivel_texto(desnivel):
     if _vacio(desnivel):
         return "sin dato"
@@ -216,8 +231,9 @@ def _grafico_curva(caps, efs, cap_opt, ef_act, ef_opt, capacidad):
     return _png(fig, 190)
 
 
-def _dibujo_portada(m, d):
-    """Ilustración plana del sistema: lluvia → techo → estanque → uso. 210 × 94 mm."""
+def _dibujo_portada(m, d, capacidad, cobertura):
+    """Ilustración plana del sistema: lluvia → techo → estanque → uso. 210 × 94 mm.
+    `capacidad` y `cobertura` son las del estanque que se muestra (el óptimo)."""
     _registrar_fuentes_mpl()
     W, H = 210.0, 94.0
     fig = plt.figure(figsize=(W / 25.4, H / 25.4))
@@ -261,10 +277,10 @@ def _dibujo_portada(m, d):
     # estanque
     tx, tw, th = 100, 34, 38
     ax.add_patch(Rectangle((tx, GY), tw, th, fc="#EAF1F7", ec=LINE, lw=2, zorder=3))
-    nivel = min(max(m["normal"]["cobertura"], 12), 100) / 100  # decorativo, según cobertura
+    nivel = min(max(cobertura, 12), 100) / 100  # decorativo, según la cobertura con ese estanque
     ax.add_patch(Rectangle((tx + 1, GY + 1), tw - 2, (th - 2) * nivel, fc=WATER, ec="none", zorder=3.2))
     ax.add_patch(Ellipse((tx + tw / 2, GY + th), tw, 7, fc="#98D2F8", ec=LINE, lw=2, zorder=4))
-    ax.text(tx + tw / 2, GY + th * 0.4, f"{_num(d['capacidad_maxima'])} L", color="white",
+    ax.text(tx + tw / 2, GY + th * 0.4, f"{_num(capacidad)} L", color="white",
             fontsize=12, fontweight="bold", ha="center", va="center", zorder=6)
 
     # salida del estanque → llave
@@ -297,9 +313,9 @@ def _dibujo_portada(m, d):
             fontweight="bold", ha="center", va="center", zorder=6)
     ax.text(40, 4.2, "capta la lluvia", color="#F2E4D0", fontsize=7.5, ha="center", va="center", zorder=6)
     ax.text(tx + tw / 2, 4.2, "la guarda", color="#F2E4D0", fontsize=7.5, ha="center", va="center", zorder=6)
-    ax.text(tx + tw / 2, 9, f"Estanque {_num(d['capacidad_maxima'])} L", color="white", fontsize=9.5,
+    ax.text(tx + tw / 2, 9, f"Estanque óptimo {_num(capacidad)} L", color="white", fontsize=8.2,
             fontweight="bold", ha="center", va="center", zorder=6)
-    ax.text(197, 9, f"{pers} personas", color="white", fontsize=9.5, fontweight="bold",
+    ax.text(197, 9, f"{pers} {'persona' if str(pers) == '1' else 'personas'}", color="white", fontsize=9.5, fontweight="bold",
             ha="center", va="center", zorder=6)
     ax.text(197, 4.2, f"{_num(d['litros_persona_dia'])} L/persona/día", color="#F2E4D0", fontsize=7.5,
             ha="center", va="center", zorder=6)
@@ -359,8 +375,16 @@ def generar_informe_pdf(d):
     }
     curva = d.get("curva_normal") or calcular_curva_optimizacion(d["df_normal"], d["capacidad_maxima"])
     caps, efs, cap_opt, ef_act, ef_opt = curva
-    pct_n = m["normal"]["cobertura"]
-    veredicto = clasificar_viabilidad(pct_n)
+    pct_n = m["normal"]["cobertura"]           # con el estanque INGRESADO: solo de comparación
+    # La portada y el veredicto hablan del estanque ÓPTIMO; el ingresado es solo una referencia (páginas 2 y 3).
+    hay_opt = not _vacio(cap_opt)
+    if hay_opt:
+        m_opt = {k: _simular_capacidad(d[f"df_{k}"], cap_opt) for k in ("seco", "normal", "lluvioso")}
+        cob_opt = m_opt["normal"]["cobertura"]
+        dias_seco_opt = m_opt["seco"]["dias_sin_agua"]
+    else:
+        cob_opt, dias_seco_opt = pct_n, m["seco"]["dias_sin_agua"]
+    veredicto = clasificar_viabilidad(cob_opt)
     anios_validos = len(totales) or (d["anio_fin"] - d["anio_inicio"] + 1)
     n_meses = max(len(d.get("meses_seleccionados") or []), 1)
     mult = d.get("multiplicador_lluvia")
@@ -421,47 +445,67 @@ def generar_informe_pdf(d):
     pdf.set_text_color(*ARENA)
     pdf.cell(88, 5, hoy, align="R")
 
-    pdf.set_xy(12, 40)
+    pdf.set_xy(12, 33)
     pdf.set_font("Poppins", "B", 30)
     pdf.set_text_color(*BLANCO)
     pdf.cell(186, 13, "Simulador SCALL")
-    pdf.set_xy(12, 54)
+    pdf.set_xy(12, 47)
     pdf.set_font("Poppins", "", 13)
     pdf.set_text_color(*CIELO)
     pdf.cell(186, 7, "Cosecha de aguas lluvias")
 
-    # nombre del proyecto
+    # nombre del proyecto, su ubicación y la estación de referencia
     pdf.set_fill_color(*OSC2)
-    pdf.rect(10, 68, 190, 22, "F", round_corners=True, corner_radius=3)
+    pdf.rect(10, 58, 190, 32, "F", round_corners=True, corner_radius=3)
     pdf.set_fill_color(*AMARILLO)
-    pdf.rect(10, 68, 2.2, 22, "F")
+    pdf.rect(10, 58, 2.2, 32, "F")
     nombre = str(d["nombre_proyecto"])
-    sz = 21
+    sz = 20
     pdf.set_font("Poppins", "B", sz)
     while sz > 11 and pdf.get_string_width(nombre) > 176:
         sz -= 1
         pdf.set_font("Poppins", "B", sz)
-    pdf.set_xy(17, 70)
+    pdf.set_xy(17, 59.5)
     pdf.set_text_color(*BLANCO)
     pdf.cell(180, 11, nombre)
-    pdf.set_xy(17, 81)
-    pdf.set_font("Poppins", "", 8.5)
-    pdf.set_text_color(*CIELO)
-    pdf.cell(180, 6, f"Estación {d['est_nombre']}  ·  Datos {d['anio_inicio']}–{d['anio_fin']}  ·  "
-                     f"{_num(d['alt_proyecto'], 0, ' m.s.n.m.')}")
+
+    if _vacio(d.get("lat_proyecto")) or _vacio(d.get("lon_proyecto")):
+        ubic = "Ubicación del proyecto: sin dato"
+    else:
+        ubic = (f"Ubicación del proyecto: {_num(d['lat_proyecto'], 4)}, {_num(d['lon_proyecto'], 4)}"
+                + (f"  ·  {_num(d['alt_proyecto'], 0, ' m.s.n.m.')}" if not _vacio(d.get("alt_proyecto")) else ""))
+    est = f"Estación de referencia: {d['est_nombre']}"
+    if not _vacio(d.get("est_codigo")):
+        est += f" ({d['est_codigo']})"
+    if not _vacio(d.get("distancia")):
+        est += f"  ·  a {_num(d['distancia'], 1, ' km')} del proyecto"
+    if not _vacio(desnivel):
+        est += f"  ·  proyecto {_desnivel_texto(desnivel)}"
+    datos_txt = f"Registros CR² {d['anio_inicio']}–{d['anio_fin']}"
+    if not _vacio(d.get("pct_calidad")):
+        datos_txt += f"  ·  {_num(d['pct_calidad'], 0, ' %')} de meses con dato"
+    for k, (txt, col) in enumerate(((ubic, CIELO), (est, CIELO), (datos_txt, ARENA))):
+        pdf.set_text_color(*col)
+        sz_l = 8.5
+        pdf.set_font("Poppins", "", sz_l)
+        while sz_l > 6 and pdf.get_string_width(txt) > 178:
+            sz_l -= 0.5
+            pdf.set_font("Poppins", "", sz_l)
+        pdf.set_xy(17, 71.5 + k * 5.6)
+        pdf.cell(180, 5, txt)
 
     # dibujo del sistema
     try:
-        pdf.image(_dibujo_portada(m, d), x=0, y=94, w=210)
+        pdf.image(_dibujo_portada(m, d, cap_opt if hay_opt else d['capacidad_maxima'], cob_opt), x=0, y=94, w=210)
     except Exception:
         pass
 
     # tarjetas de resultado
     color_v = {"VIABLE": LIMA, "PARCIALMENTE VIABLE": AMARILLO}.get(veredicto, ROJO_SUAVE)
     explica = {
-        "VIABLE": "La lluvia cubre la mayor parte de la demanda de un año normal.",
-        "PARCIALMENTE VIABLE": "La lluvia cubre solo una parte de la demanda; conviene una fuente complementaria.",
-    }.get(veredicto, "La lluvia no alcanza por sí sola: se necesita otra fuente de agua.")
+        "VIABLE": "Con el estanque recomendado, la lluvia cubre la mayor parte de la demanda de un año normal.",
+        "PARCIALMENTE VIABLE": "Con el estanque recomendado, la lluvia cubre solo una parte de la demanda; conviene una fuente complementaria.",
+    }.get(veredicto, "Aun con el estanque recomendado la lluvia no alcanza por sí sola: se necesita otra fuente de agua.")
 
     def tarjeta(x, y, w, h, etiqueta, valor, sub, fondo, c_etiq, c_valor, c_sub, tam_valor=24):
         pdf.set_fill_color(*fondo)
@@ -484,13 +528,15 @@ def generar_informe_pdf(d):
         pdf.cell(w - 10, 4.5, sub)
 
     cy = 192
-    tarjeta(10, cy, 92, 30, "Veredicto", veredicto, "con el estanque ingresado", color_v,
+    sub_est = "con el estanque recomendado" if hay_opt else "con el estanque ingresado"
+    tarjeta(10, cy, 92, 30, "Veredicto", veredicto, sub_est, color_v,
             OSC, OSC, OSC, tam_valor=19)
-    tarjeta(108, cy, 92, 30, "Cobertura · año normal", _num(pct_n, 1, " %"),
-            f"con estanque de {_num(d['capacidad_maxima'])} L", OSC2, CIELO, BLANCO, ARENA)
+    tarjeta(108, cy, 92, 30, "Demanda cubierta · año normal", _num(cob_opt, 1, " %"),
+            f"con estanque óptimo de {_num(cap_opt)} L" if hay_opt else f"con estanque de {_num(d['capacidad_maxima'])} L",
+            OSC2, CIELO, AMARILLO, ARENA, tam_valor=28)
     tarjeta(10, cy + 35, 92, 30, "Estanque recomendado", _num(cap_opt, 0, " L"),
-            f"cobertura de {_num(ef_opt, 1, ' %')} en año normal", OSC2, CIELO, AMARILLO, ARENA)
-    tarjeta(108, cy + 35, 92, 30, "Días sin agua · año seco", _num(m["seco"]["dias_sin_agua"]),
+            "donde agrandar deja de dar ganancias importantes", OSC2, CIELO, BLANCO, ARENA)
+    tarjeta(108, cy + 35, 92, 30, "Días sin agua · año seco", _num(dias_seco_opt),
             f"de {_num(m['seco']['dias_operacion'])} días de operación", OSC2, CIELO, BLANCO, ARENA)
 
     pdf.set_xy(10, 264)
@@ -674,16 +720,20 @@ def generar_informe_pdf(d):
     y = titulo_seccion("CONCLUSIONES Y RECOMENDACIONES", y)
     seco = m["seco"]
     parrafos = [
-        (f"Viabilidad del sistema: {veredicto} ({_num(pct_n, 1, ' %')} de cobertura en año normal)", "B"),
-        (f"En el año normal ({d['anio_mediano']}), el sistema cubre el {_num(pct_n, 1, ' %')} de la demanda "
-         f"anual con el estanque ingresado de {_num(d['capacidad_maxima'])} L. Los datos corresponden a "
-         f"{anios_validos} años de registros históricos de la estación {d['est_nombre']}.", ""),
-        (f"Para aprovechar mejor la lluvia se recomienda un estanque de {_num(cap_opt)} L, con el que se "
-         f"alcanza una cobertura de {_num(ef_opt, 1, ' %')} en el año normal." if not _vacio(cap_opt) else
-         "No fue posible calcular un tamaño óptimo de estanque con los datos disponibles.", ""),
-        (f"En el año seco (percentil 5, año {d['anio_seco']}) se registran {_num(seco['dias_sin_agua'])} días "
-         f"sin suministro. Se recomienda disponer de una fuente de abastecimiento complementaria para "
-         f"cubrir esos períodos críticos.", ""),
+        (f"Viabilidad del sistema: {veredicto} ({_num(cob_opt, 1, ' %')} de la demanda cubierta con el estanque "
+         f"{'recomendado' if hay_opt else 'ingresado'})", "B"),
+        (f"Con el estanque recomendado de {_num(cap_opt)} L, el sistema cubre el {_num(cob_opt, 1, ' %')} de la "
+         f"demanda anual del año normal ({d['anio_mediano']}). Los datos corresponden a {anios_validos} años de "
+         f"registros históricos de la estación {d['est_nombre']}." if hay_opt else
+         f"En el año normal ({d['anio_mediano']}), el sistema cubre el {_num(pct_n, 1, ' %')} de la demanda anual "
+         f"con el estanque ingresado de {_num(d['capacidad_maxima'])} L. No fue posible calcular un tamaño óptimo "
+         f"de estanque con los datos disponibles.", ""),
+        (f"Como referencia, con el estanque ingresado de {_num(d['capacidad_maxima'])} L la cobertura del año "
+         f"normal es {_num(pct_n, 1, ' %')}." if hay_opt else
+         "Se recomienda revisar el tamaño del estanque con datos más completos.", ""),
+        (f"En el año seco (percentil 5, año {d['anio_seco']}) se registran {_num(dias_seco_opt)} días "
+         f"sin suministro{' con el estanque recomendado' if hay_opt else ''}. Se recomienda disponer de una fuente "
+         f"de abastecimiento complementaria para cubrir esos períodos críticos.", ""),
         (f"Dotación utilizada: {_num(d['litros_persona_dia'])} L/persona/día (RIDAA, DS MOP 50/2002, Anexo 4). "
          f"Techo de {_num(d['techo'], 2)} m² y eficiencia de captación de "
          f"{_num(float(d['eficiencia']) * 100, 0, ' %')}.", "I"),
