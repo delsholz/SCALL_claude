@@ -1,15 +1,25 @@
 """
-Historial de simulaciones SCALL usando la API REST de Supabase (via requests).
-No requiere el paquete supabase-py — usa requests que ya está en requirements.txt.
+Historial de simulaciones SCALL.
 
+Almacén permanente: la API REST de Supabase (via requests, sin supabase-py).
 Credenciales (en orden de prioridad):
   1. .streamlit/secrets.toml  → [supabase] url / key
   2. Variables de entorno      → SUPABASE_URL / SUPABASE_KEY
+
+Respaldo: si Supabase no está configurado o no responde (el proyecto se borró, no hay internet, la clave venció…),
+el historial sigue funcionando en un archivo SQLite del servidor (~/.scall_amulen/historial.db; se puede cambiar con
+SCALL_HISTORIAL_DB). Es temporal en Streamlit Cloud: se pierde cuando la app se reinicia. Tras un fallo se deja de
+insistir con Supabase 5 minutos, así la app no se queda esperando una dirección muerta.
 """
 import io
 import json
 import os
 import re
+import sqlite3
+import tempfile
+import time
+from datetime import datetime, timezone
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import requests
@@ -232,10 +242,131 @@ def _extraer_metricas(d):
 # API pública
 # ---------------------------------------------------------------------------
 
-def guardar_simulacion(informe_datos, usuario=None):
-    """Guarda una simulación en Supabase. Retorna True si tuvo éxito."""
+# --- Circuito de seguridad: tras un fallo de Supabase se usa el respaldo local un rato ---
+_SB_PAUSA_S = 300
+_sb_fallo_hasta = 0.0
+_sb_motivo = ""
+
+
+def _sb_activo():
+    return _supabase_disponible() and time.time() >= _sb_fallo_hasta
+
+
+def _sb_fallo(exc_o_texto):
+    """Anota que Supabase falló y deja de usarlo por unos minutos."""
+    global _sb_fallo_hasta, _sb_motivo
+    if isinstance(exc_o_texto, requests.exceptions.ConnectionError):
+        _sb_motivo = "no se pudo conectar (el proyecto ya no existe o no hay internet)"
+    elif isinstance(exc_o_texto, requests.exceptions.Timeout):
+        _sb_motivo = "tardó demasiado en responder"
+    else:
+        _sb_motivo = str(exc_o_texto)[:160]
+    _sb_fallo_hasta = time.time() + _SB_PAUSA_S
+
+
+def estado_historial():
+    """('supabase' | 'local', motivo). 'local' = el historial se guarda temporalmente en el servidor."""
+    if _sb_activo():
+        return "supabase", ""
     if not _supabase_disponible():
+        return "local", "no hay credenciales de Supabase configuradas"
+    return "local", _sb_motivo or "Supabase no responde"
+
+
+# --- Respaldo local (SQLite) ---
+_COLS_LOCAL = ("fecha_simulacion", "usuario", "nombre_proyecto", "est_nombre", "est_codigo", "techo",
+               "capacidad_maxima", "numero_personas", "pct_cubierto_normal", "dias_sin_agua_normal",
+               "cap_optima", "anio_seco", "anio_mediano", "anio_lluvioso", "informe_datos_json")
+
+_SQL_TABLA = """CREATE TABLE IF NOT EXISTS simulaciones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, fecha_simulacion TEXT, usuario TEXT, nombre_proyecto TEXT,
+    est_nombre TEXT, est_codigo TEXT, techo REAL, capacidad_maxima REAL, numero_personas INTEGER,
+    pct_cubierto_normal REAL, dias_sin_agua_normal INTEGER, cap_optima REAL,
+    anio_seco INTEGER, anio_mediano INTEGER, anio_lluvioso INTEGER, informe_datos_json TEXT)"""
+
+
+def _ruta_db():
+    env = os.environ.get("SCALL_HISTORIAL_DB")
+    return Path(env) if env else Path.home() / ".scall_amulen" / "historial.db"
+
+
+def _conectar_local():
+    ultimo = None
+    for ruta in (_ruta_db(), Path(tempfile.gettempdir()) / "scall_historial.db"):
+        try:
+            ruta.parent.mkdir(parents=True, exist_ok=True)
+            con = sqlite3.connect(str(ruta), timeout=10)
+            con.execute(_SQL_TABLA)
+            return con
+        except Exception as e:
+            ultimo = e
+    raise ultimo
+
+
+def _a_nativo(v):
+    """Tipos numpy/pandas -> tipos que SQLite entiende (NaN -> NULL)."""
+    if hasattr(v, "item"):
+        v = v.item()
+    if isinstance(v, float) and v != v:
+        return None
+    return v
+
+
+def _local_guardar(row, serial):
+    try:
+        con = _conectar_local()
+        try:
+            datos = {k: _a_nativo(row.get(k)) for k in _COLS_LOCAL}
+            datos["fecha_simulacion"] = datetime.now(timezone.utc).isoformat()
+            datos["informe_datos_json"] = json.dumps(serial, ensure_ascii=False, default=_json_default)
+            con.execute(f"INSERT INTO simulaciones ({','.join(datos)}) VALUES ({','.join('?' * len(datos))})",
+                        list(datos.values()))
+            con.commit()
+        finally:
+            con.close()
+        return True
+    except Exception:
         return False
+
+
+def _local_listar(usuario, incluir_anonimas, limite):
+    con = _conectar_local()
+    try:
+        sql = ("SELECT id,fecha_simulacion,usuario,nombre_proyecto,est_nombre,est_codigo,techo,capacidad_maxima,"
+               "numero_personas,pct_cubierto_normal,dias_sin_agua_normal,cap_optima,anio_seco,anio_mediano,"
+               "anio_lluvioso FROM simulaciones")
+        params = []
+        if usuario:
+            nombre = normalizar_usuario(usuario).lower()
+            if incluir_anonimas and nombre != ANONIMO.lower():
+                sql += " WHERE lower(usuario) = ? OR usuario = ?"
+                params = [nombre, ANONIMO]
+            else:
+                sql += " WHERE lower(usuario) = ?"
+                params = [nombre]
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(int(limite))
+        return pd.read_sql_query(sql, con, params=params)
+    finally:
+        con.close()
+
+
+def _fechas_chile(df):
+    fechas = pd.to_datetime(df['fecha_simulacion'], utc=True, errors='coerce')
+    try:
+        fechas = fechas.dt.tz_convert('America/Santiago')       # se guarda en UTC: mostrar la hora de Chile
+    except Exception:
+        pass
+    df['fecha_simulacion'] = fechas
+    return df
+
+
+# ---------------------------------------------------------------------------
+# API pública
+# ---------------------------------------------------------------------------
+
+def guardar_simulacion(informe_datos, usuario=None):
+    """Guarda una simulación (Supabase y, si no responde, el respaldo local). Retorna True si quedó guardada."""
     try:
         pct, dias, cap_opt = _extraer_metricas(informe_datos)
         serial = _serializar_informe(informe_datos)
@@ -267,23 +398,19 @@ def guardar_simulacion(informe_datos, usuario=None):
             'cap_optima': cap_opt,
             'informe_datos_json': serial,
         }
-
-        payload = json.dumps(row, ensure_ascii=False, default=_json_default)
-        resp = requests.post(
-            _base_url(),
-            headers=_headers(),
-            data=payload,
-            timeout=15,
-        )
-        if resp.status_code not in (200, 201):
-            import streamlit as _st
-            _st.error(f"Supabase error {resp.status_code}: {resp.text[:300]}")
-            return False
-        return True
-    except Exception as _e:
-        import streamlit as _st
-        _st.error(f"Error al guardar simulación: {_e}")
+    except Exception:
         return False
+
+    if _sb_activo():
+        try:
+            payload = json.dumps(row, ensure_ascii=False, default=_json_default)
+            resp = requests.post(_base_url(), headers=_headers(), data=payload, timeout=10)
+            if resp.status_code in (200, 201):
+                return True
+            _sb_fallo(f"Supabase respondió {resp.status_code}: {resp.text[:100]}")
+        except Exception as e:
+            _sb_fallo(e)
+    return _local_guardar(row, serial)
 
 
 def _json_default(obj):
@@ -298,38 +425,31 @@ def _json_default(obj):
 def cargar_historial_con_estado(usuario=None, incluir_anonimas=False, limite=500):
     """Metadatos de las simulaciones de `usuario` (sin distinguir mayúsculas), de la más nueva a la más antigua.
 
-    Retorna (DataFrame, error). `error` es None si todo salió bien y un texto en castellano si falló (sin conexión,
-    credenciales malas, tabla inexistente…): así la pantalla puede decirlo en vez de mostrar «aún no tienes simulaciones».
+    Retorna (DataFrame, error). `error` es None si todo salió bien y un texto en castellano si falló. Si Supabase no
+    responde se lee el respaldo local (consulta `estado_historial()` para avisarlo en pantalla).
     """
-    if not _supabase_disponible():
-        return pd.DataFrame(), "No hay credenciales de Supabase configuradas."
-    try:
-        cols = (
-            'id,fecha_simulacion,usuario,nombre_proyecto,est_nombre,est_codigo,'
-            'techo,capacidad_maxima,numero_personas,pct_cubierto_normal,'
-            'dias_sin_agua_normal,cap_optima,anio_seco,anio_mediano,anio_lluvioso'
-        )
-        params = {'select': cols, 'order': 'fecha_simulacion.desc', 'limit': str(limite)}
-        if usuario:
-            params.update(_filtro_usuario(usuario, incluir_anonimas))
-        resp = requests.get(_base_url(), headers={**_headers(), "Prefer": ""}, params=params, timeout=12)
-        if not resp.ok:
-            return pd.DataFrame(), f"Supabase respondió {resp.status_code}: {resp.text[:200]}"
-        data = resp.json()
-        if not data:
-            return pd.DataFrame(), None
-        df = pd.DataFrame(data)
-        fechas = pd.to_datetime(df['fecha_simulacion'], utc=True, errors='coerce')
+    if _sb_activo():
         try:
-            fechas = fechas.dt.tz_convert('America/Santiago')       # la base guarda UTC: mostrar la hora de Chile
-        except Exception:
-            pass
-        df['fecha_simulacion'] = fechas
-        return df, None
-    except requests.exceptions.Timeout:
-        return pd.DataFrame(), "Supabase tardó demasiado en responder. Intenta de nuevo en un momento."
-    except requests.exceptions.ConnectionError:
-        return pd.DataFrame(), "No hay conexión con Supabase."
+            cols = (
+                'id,fecha_simulacion,usuario,nombre_proyecto,est_nombre,est_codigo,'
+                'techo,capacidad_maxima,numero_personas,pct_cubierto_normal,'
+                'dias_sin_agua_normal,cap_optima,anio_seco,anio_mediano,anio_lluvioso'
+            )
+            params = {'select': cols, 'order': 'fecha_simulacion.desc', 'limit': str(limite)}
+            if usuario:
+                params.update(_filtro_usuario(usuario, incluir_anonimas))
+            resp = requests.get(_base_url(), headers={**_headers(), "Prefer": ""}, params=params, timeout=10)
+            if resp.ok:
+                data = resp.json()
+                if not data:
+                    return pd.DataFrame(), None
+                return _fechas_chile(pd.DataFrame(data)), None
+            _sb_fallo(f"Supabase respondió {resp.status_code}: {resp.text[:100]}")
+        except Exception as e:
+            _sb_fallo(e)
+    try:
+        df = _local_listar(usuario, incluir_anonimas, limite)
+        return (_fechas_chile(df) if not df.empty else df), None
     except Exception as e:
         return pd.DataFrame(), f"No se pudo leer el historial: {e}"
 
@@ -342,34 +462,49 @@ def cargar_historial(usuario=None):
 
 def cargar_simulacion_completa(sim_id):
     """Retorna el informe_datos completo de una simulación por ID."""
-    if not _supabase_disponible():
-        return None
+    if _sb_activo():
+        try:
+            resp = requests.get(
+                _base_url(),
+                headers={**_headers(), "Prefer": ""},
+                params={'select': 'informe_datos_json', 'id': f'eq.{sim_id}', 'limit': '1'},
+                timeout=20,
+            )
+            if resp.ok:
+                if not resp.json():
+                    return None
+                return _deserializar_informe(resp.json()[0]['informe_datos_json'])
+            _sb_fallo(f"Supabase respondió {resp.status_code}")
+        except Exception as e:
+            _sb_fallo(e)
     try:
-        resp = requests.get(
-            _base_url(),
-            headers={**_headers(), "Prefer": ""},
-            params={'select': 'informe_datos_json', 'id': f'eq.{sim_id}', 'limit': '1'},
-            timeout=20,
-        )
-        if not resp.ok or not resp.json():
-            return None
-        j = resp.json()[0]['informe_datos_json']
-        return _deserializar_informe(j)
+        con = _conectar_local()
+        try:
+            fila = con.execute("SELECT informe_datos_json FROM simulaciones WHERE id = ?", (int(sim_id),)).fetchone()
+        finally:
+            con.close()
+        return _deserializar_informe(json.loads(fila[0])) if fila and fila[0] else None
     except Exception:
         return None
 
 
 def eliminar_simulacion(sim_id):
     """Elimina una simulación por ID. Retorna True si tuvo éxito."""
-    if not _supabase_disponible():
-        return False
+    if _sb_activo():
+        try:
+            resp = requests.delete(_base_url(), headers=_headers(), params={'id': f'eq.{sim_id}'}, timeout=10)
+            if resp.status_code in (200, 204):
+                return True
+            _sb_fallo(f"Supabase respondió {resp.status_code}")
+        except Exception as e:
+            _sb_fallo(e)
     try:
-        resp = requests.delete(
-            _base_url(),
-            headers=_headers(),
-            params={'id': f'eq.{sim_id}'},
-            timeout=10,
-        )
-        return resp.status_code in (200, 204)
+        con = _conectar_local()
+        try:
+            cur = con.execute("DELETE FROM simulaciones WHERE id = ?", (int(sim_id),))
+            con.commit()
+            return cur.rowcount > 0
+        finally:
+            con.close()
     except Exception:
         return False

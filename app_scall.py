@@ -14,7 +14,7 @@ from simulator import (simular_continua, simular_escenario,
 
 try:
     from history import (guardar_simulacion, cargar_historial_con_estado, normalizar_usuario,
-                         cargar_simulacion_completa, eliminar_simulacion)
+                         cargar_simulacion_completa, eliminar_simulacion, estado_historial)
     _HISTORIAL_DISPONIBLE = True
 except Exception:
     _HISTORIAL_DISPONIBLE = False
@@ -1258,6 +1258,13 @@ with tab4:
             with st.spinner("Cargando historial..."):
                 st.session_state['_hist_cache'] = cargar_historial_con_estado(usuario_n, incluir_anon)
         df_hist, error_hist = st.session_state['_hist_cache']
+
+        _modo_h, _motivo_h = estado_historial()
+        if _modo_h == "local":
+            st.warning(
+                f"⚠️ El historial permanente (Supabase) no está disponible: {_motivo_h}. Tus simulaciones se guardan "
+                "**temporalmente en este servidor** y pueden borrarse cuando la app se reinicie. "
+                "Descarga el PDF de lo que quieras conservar.")
 
         if error_hist:
             st.error(f"No se pudo cargar el historial: {error_hist}")
