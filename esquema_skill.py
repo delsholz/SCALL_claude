@@ -89,7 +89,7 @@ for i_t, t in enumerate(tramos):
         anchos.append(14)
 X0 = 38 if fuente.get("tipo") == "lluvia" else (13 if POZO_DENTRO else 31)              # donde empiezan los tramos (con el pozo adentro de la caseta, más a la izquierda)
 dest_w = 58 if ES_SSR else (68 if fuente.get("tipo") == "lluvia" else 41)
-W = max(X0 + sum(anchos) + GAP * len(tramos) + dest_w + 6, 200)
+W = cfg.get("ancho_dibujo") or max(X0 + sum(anchos) + GAP * len(tramos) + dest_w + 6, 200)      # ancho_dibujo: escuela más angosta
 
 fig = plt.figure(figsize=(W / 10, H / 10))
 ax = fig.add_axes([0, 0, 1, 1]); ax.set_xlim(0, W); ax.set_ylim(0, H); ax.axis("off")
@@ -658,11 +658,13 @@ elif ft == "lluvia":
         ax.plot([bxx] * 2, [yw - 1.4, yw - 0.1], color=LINE, lw=2.0, zorder=4.1)
     flecha((xin0 + xb) / 2, yw - 0.6, 180, z=4.4)
     # nube con MUCHAS gotas sobre el techo (en el hueco libre entre la leyenda y los logos)
-    cxc = 118.0
-    nube_lluvia(cxc, yw + ddy + 8.2, 46, lambda xq: yw + 1.0, xa + 30, xb - 6)                    # nube más arriba
+    nubes = fuente.get("nubes") or [118.0]                                                          # centros de las nubes (varias = escuela más angosta)
+    nw = float(fuente.get("nube_ancho", 46))
+    for cxc in nubes:
+        nube_lluvia(cxc, yw + ddy + 8.2, nw, lambda xq: yw + 1.0, xa + (2 if fuente.get("nubes") else 30), xb - 6)                  # nubes más arriba
     for yy_ in np.arange(yw + 2.6, yw + ddy - 0.6, 2.2):                                           # lluvia en TODO el techo
         for xx_ in np.arange(xa - 1 + ddx * (yy_ - yw) / ddy, xb + 2 + ddx * (yy_ - yw) / ddy, 3.0):
-            if abs(xx_ - cxc) >= 0.46 * 46:
+            if all(abs(xx_ - cxc) >= 0.46 * nw for cxc in nubes):
                 gota(xx_, yy_, 0.85, 8.2)
     # ventanas de la escuela (y la ventana GRANDE de la sala con alumnos estudiando, a la derecha)
     ventana(xa + 11.8, GY + 9.0, 8.0, 10.0)

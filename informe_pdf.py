@@ -161,52 +161,34 @@ def _estilo_eje(ax):
 
 
 def _grafico_nivel(df, capacidad):
-    """Arriba: nivel REAL del estanque (entre 0 y su capacidad). Abajo: lo que sobra (rebalse) y lo que falta (déficit)."""
+    """Gráfico de la app: agua acumulada del año con la capacidad del estanque.
+    La línea sobre la capacidad es lo que rebalsa; la que baja de 0 es lo que falta."""
     _registrar_fuentes_mpl()
     x = pd.to_datetime(df["Eje X"])
-    y = df["Estanque Final (L)"].astype(float).values
+    y = df["Agua Acumulada Teórica (L)"].astype(float).values
     cap = float(capacidad)
 
-    fig, (ax, ax2) = plt.subplots(2, 1, figsize=(7.5, 4.0), sharex=True,
-                                  gridspec_kw={"height_ratios": [2.1, 1.1], "hspace": 0.16})
-    fig.patch.set_facecolor("white")
-    _estilo_eje(ax)
-    _estilo_eje(ax2)
-
-    vac = None
-    if "Día" in df.columns:
-        vac = df["Día"].astype(str).str.contains("Vacaciones").values
-    for a in (ax, ax2):
-        if vac is not None and vac.any():
-            a.fill_between(x, 0, 1, where=vac, transform=a.get_xaxis_transform(),
-                           color="#CBD3DD", alpha=0.55, linewidth=0,
-                           label="Sin clases" if a is ax else None)
-
-    ax.fill_between(x, y, color=_hex(CIELO), alpha=0.35, linewidth=0)
-    ax.plot(x, y, color=_hex(AZUL), linewidth=1.8, label="Nivel del estanque")
-    ax.axhline(cap, color="#E0A800", linestyle="--", linewidth=1.4,
+    fig, ax = plt.subplots(figsize=(9.5, 2.8))
+    ax.fill_between(x, y, alpha=0.18, color=_hex(AZUL))
+    ax.plot(x, y, color=_hex(AZUL), linewidth=2.0, label="Nivel del estanque")
+    ax.axhline(y=cap, color=_hex(OSC), linestyle="--", linewidth=1.5,
                label=f"Capacidad: {formato_chileno(cap, 0)} L")
-    ax.set_ylim(-cap * 0.03, cap * 1.08)
-    ax.set_yticks([t for t in ax.get_yticks() if 0 <= t <= cap * 1.001])
-    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: formato_chileno(v, 0)))
-    ax.set_ylabel("Nivel (L)", fontsize=8.5, color=_hex(OSC))
-    ax.legend(fontsize=7.5, loc="lower left", ncol=3, frameon=True, framealpha=0.92,
-              facecolor="white", edgecolor=_hex(CIELO))
-
-    reb = df["Rebalse (L)"].astype(float).values if "Rebalse (L)" in df.columns else np.zeros(len(df))
-    deficit = df[_col_deficit(df)].astype(float).values
-    ax2.bar(x, np.where(reb > 0, reb, 0), width=1.0, color=_hex(AGUA), linewidth=0,
-            label="Rebalse: lo que no cabe en el estanque")
-    ax2.bar(x, np.where(deficit < 0, deficit, 0), width=1.0, color="#E5533D", linewidth=0,
-            label="Déficit: lo que falta para cubrir la demanda")
-    ax2.axhline(0, color=_hex(AZUL), linewidth=0.8)
-    ax2.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: formato_chileno(v, 0)))
-    ax2.set_ylabel("L por día", fontsize=8.5, color=_hex(OSC))
-    ax2.xaxis.set_major_locator(mdates.MonthLocator())
-    ax2.xaxis.set_major_formatter(plt.FuncFormatter(
+    ax.axhline(y=0, color=_hex(CIELO), linestyle=":", linewidth=1.2, label="Sin agua")
+    ax.xaxis.set_major_locator(mdates.MonthLocator())
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(
         lambda v, _: _MESES_ES.get(mdates.num2date(v).month, "")))
-    ax2.legend(fontsize=7.5, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=2, frameon=False)
-    fig.subplots_adjust(left=0.1, right=0.99, top=0.98, bottom=0.21)
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: formato_chileno(v, 0)))
+    ax.tick_params(axis="both", labelsize=7.5, colors=_hex(OSC))
+    ax.set_ylabel("Volumen (L)", fontsize=8, color=_hex(OSC))
+    ax.legend(fontsize=7.5, loc="upper right", framealpha=0.9, facecolor=_hex(ARENA), edgecolor=_hex(AZUL))
+    ax.set_facecolor(_hex(ARENA))
+    ax.grid(axis="y", color=_hex(AZUL), alpha=0.12)
+    for lado in ("top", "right"):
+        ax.spines[lado].set_visible(False)
+    for lado in ("left", "bottom"):
+        ax.spines[lado].set_color(_hex(AZUL))
+    fig.patch.set_facecolor("white")
+    plt.tight_layout(pad=0.4)
     return _png(fig, 190)
 
 
@@ -339,8 +321,9 @@ def _esquema_png(techo_txt, litros_txt):
     """PNG del esquema de agua lluvia hecho con esquema_skill.py (el generador de /generador-esquema-solucion).
     Solo el dibujo y la lista de etapas, sin título ni logos."""
     cfg = {
-        "tipo": "escuela", "nombre": "SCALL", "solo_dibujo": True, "alto_dibujo": 96, "dpi": 140, "ncol_etapas": 2, "texto_etapas": 1.15,
-        "fuente": {"tipo": "lluvia", "medida": techo_txt, "dato": "captación de agua lluvia"},
+        "tipo": "escuela", "nombre": "SCALL", "solo_dibujo": True, "alto_dibujo": 96, "dpi": 140, "ncol_etapas": 2, "texto_etapas": 1.15, "ancho_dibujo": 160,
+        "fuente": {"tipo": "lluvia", "medida": techo_txt, "dato": "captación de agua lluvia",
+                   "nubes": [40, 80, 120], "nube_ancho": 34},
         "tramos": [{"estanque": {"forma": "vertical", "nuevo": True, "medida": litros_txt,
                                  "nombre": "Estanque de agua lluvia", "dato": "almacenamiento",
                                  "entrada": "techo"}}],
@@ -364,9 +347,10 @@ def _dibujo_cover(m, d, capacidad, cobertura):
     try:
         datos = _esquema_png(f"{formato_chileno(float(d['techo']), 1)} m²", f"{formato_chileno(float(capacidad), 0)} L")
         w, h = Image.open(io.BytesIO(datos)).size
-        return io.BytesIO(datos), 210.0 * h / w
+        ancho = min(210.0, 100.0 * w / h)                  # unos 100 mm de alto; el fondo es igual al de la página
+        return io.BytesIO(datos), ancho * h / w, ancho
     except Exception:
-        return _dibujo_portada(m, d, capacidad, cobertura), 94.0
+        return _dibujo_portada(m, d, capacidad, cobertura), 94.0, 210.0
 
 
 def _logo(ancho_px):
@@ -545,8 +529,8 @@ def generar_informe_pdf(d):
     # dibujo del sistema (esquema de la skill de afiches)
     y_img = 58 + alto_panel + 4
     try:
-        img_dib, alto_dib = _dibujo_cover(m, d, cap_opt if hay_opt else d['capacidad_maxima'], cob_opt)
-        pdf.image(img_dib, x=0, y=y_img, w=210)
+        img_dib, alto_dib, ancho_dib = _dibujo_cover(m, d, cap_opt if hay_opt else d['capacidad_maxima'], cob_opt)
+        pdf.image(img_dib, x=(210 - ancho_dib) / 2, y=y_img, w=ancho_dib)
     except Exception:
         alto_dib = 0
 
@@ -724,7 +708,12 @@ def generar_informe_pdf(d):
             y = nueva_pagina("Datos del análisis")
         y = titulo_seccion(f"NIVEL DEL ESTANQUE · AÑO NORMAL ({d['anio_mediano']})", y)
         pdf.image(img, x=10, y=y + 2, w=190)
-        y += alto + 7
+        y += alto + 3
+        pdf.set_xy(10, y)
+        pdf.set_font("Poppins", "I", 7.5)
+        pdf.set_text_color(*GRIS)
+        pdf.cell(190, 4, "La línea sobre la capacidad es lo que rebalsa; cuando baja de 0, es lo que falta para cubrir la demanda.")
+        y += 8
     except Exception as e:
         pdf.set_xy(10, y + 3)
         pdf.set_font("Poppins", "I", 8)
